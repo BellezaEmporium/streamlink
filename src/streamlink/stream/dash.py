@@ -8,6 +8,8 @@ from time import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
+from requests import Response
+
 from streamlink.exceptions import PluginError, StreamError
 from streamlink.session import Streamlink
 from streamlink.stream.dash_manifest import MPD, Representation, Segment, freeze_timeline
@@ -22,12 +24,12 @@ from streamlink.utils.times import now
 log = logging.getLogger(__name__)
 
 
-class DASHStreamWriter(SegmentedStreamWriter):
+class DASHStreamWriter(SegmentedStreamWriter[Segment, Response]):
     reader: "DASHStreamReader"
     stream: "DASHStream"
 
-    def fetch(self, segment: Segment, retries: Optional[int] = None):
-        if self.closed or not retries:
+    def fetch(self, segment: Segment):
+        if self.closed:
             return
 
         name = segment.name
@@ -53,7 +55,7 @@ class DASHStreamWriter(SegmentedStreamWriter):
                 timeout=self.timeout,
                 exception=StreamError,
                 headers=headers,
-                retries=retries,
+                retries=self.retries,
                 **request_args,
             )
         except StreamError as err:
@@ -69,7 +71,7 @@ class DASHStreamWriter(SegmentedStreamWriter):
         log.debug(f"{self.reader.mime_type} segment {segment.name}: completed")
 
 
-class DASHStreamWorker(SegmentedStreamWorker):
+class DASHStreamWorker(SegmentedStreamWorker[Segment, Response]):
     reader: "DASHStreamReader"
     writer: "DASHStreamWriter"
     stream: "DASHStream"
@@ -162,7 +164,7 @@ class DASHStreamWorker(SegmentedStreamWorker):
         return changed
 
 
-class DASHStreamReader(SegmentedStreamReader):
+class DASHStreamReader(SegmentedStreamReader[Segment, Response]):
     __worker__ = DASHStreamWorker
     __writer__ = DASHStreamWriter
 
@@ -175,10 +177,8 @@ class DASHStreamReader(SegmentedStreamReader):
         stream: "DASHStream",
         representation: Representation,
         timestamp: datetime,
-        *args,
-        **kwargs,
     ):
-        super().__init__(stream, *args, **kwargs)
+        super().__init__(stream)
         self.ident = representation.ident
         self.mime_type = representation.mimeType
         self.timestamp = timestamp
@@ -197,23 +197,23 @@ class DASHStream(Stream):
         mpd: MPD,
         video_representation: Optional[Representation] = None,
         audio_representation: Optional[Representation] = None,
-        **args,
+        **kwargs,
     ):
         """
         :param session: Streamlink session instance
         :param mpd: Parsed MPD manifest
         :param video_representation: Video representation
         :param audio_representation: Audio representation
-        :param args: Additional keyword arguments passed to :meth:`requests.Session.request`
+        :param kwargs: Additional keyword arguments passed to :meth:`requests.Session.request`
         """
 
         super().__init__(session)
         self.mpd = mpd
         self.video_representation = video_representation
         self.audio_representation = audio_representation
-        self.args = session.http.valid_request_args(**args)
+        self.args = session.http.valid_request_args(**kwargs)
 
-    def __json__(self):
+    def __json__(self):  # noqa: PLW3201
         json = dict(type=self.shortname())
 
         if self.mpd.url:
@@ -266,7 +266,7 @@ class DASHStream(Stream):
         period: int = 0,
         with_video_only: bool = False,
         with_audio_only: bool = False,
-        **args,
+        **kwargs,
     ) -> Dict[str, "DASHStream"]:
         """
         Parse a DASH manifest file and return its streams.
@@ -276,10 +276,10 @@ class DASHStream(Stream):
         :param period: Which MPD period to use (index number) for finding representations
         :param with_video_only: Also return video-only streams, otherwise only return muxed streams
         :param with_audio_only: Also return audio-only streams, otherwise only return muxed streams
-        :param args: Additional keyword arguments passed to :meth:`requests.Session.request`
+        :param kwargs: Additional keyword arguments passed to :meth:`requests.Session.request`
         """
 
-        manifest, mpd_params = cls.fetch_manifest(session, url_or_manifest, **args)
+        manifest, mpd_params = cls.fetch_manifest(session, url_or_manifest, **kwargs)
 
         try:
             mpd = cls.parse_mpd(manifest, mpd_params)
@@ -337,7 +337,7 @@ class DASHStream(Stream):
             if not vid and not aud:
                 continue
 
-            stream = DASHStream(session, mpd, vid, aud, **args)
+            stream = DASHStream(session, mpd, vid, aud, **kwargs)
             stream_name = []
 
             if vid:

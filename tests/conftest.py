@@ -15,6 +15,7 @@ _TEST_CONDITION_MARKERS: Dict[str, Tuple[bool, str]] = {
 }
 
 _TEST_PRIORITIES = (
+    "build_backend/",
     "tests/testutils/",
     "tests/utils/",
     None,
@@ -77,9 +78,23 @@ def session(request: pytest.FixtureRequest) -> Iterator[Streamlink]:
 
 
 @pytest.fixture()
-def requests_mock(requests_mock: rm.Mocker) -> rm.Mocker:  # noqa: PT004
+def requests_mock(requests_mock: rm.Mocker) -> rm.Mocker:
     """
     Override of the default `requests_mock` fixture, with `InvalidRequest` raised on unknown requests
     """
     requests_mock.register_uri(rm.ANY, rm.ANY, exc=rm.exceptions.InvalidRequest)
     return requests_mock
+
+
+@pytest.fixture()
+def os_environ(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Dict[str, str]:
+    class FakeEnviron(dict):
+        def __setitem__(self, key, value):
+            if key == "PYTEST_CURRENT_TEST":
+                return
+            return super().__setitem__(key, value)
+
+    fakeenviron = FakeEnviron(getattr(request, "param", {}))
+    monkeypatch.setattr("os.environ", fakeenviron)
+
+    return fakeenviron

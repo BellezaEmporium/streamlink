@@ -96,7 +96,7 @@ def get_args():
     return parser.parse_args()
 
 
-Email = NewType("email", str)
+Email = NewType("Email", str)
 
 
 @dataclass
@@ -112,6 +112,7 @@ class Git:
         completedprocess = subprocess.run(
             ["git", "--no-pager"] + list(map(str, gitargs)),
             capture_output=True,
+            check=True,
             **runkwargs,
         )
 

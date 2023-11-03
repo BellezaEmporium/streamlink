@@ -2,7 +2,9 @@
 requires = [
   "setuptools >=64",
   "wheel",
-  "versioningit >=2.0.0, <3",
+  # The versioningit build-requirement gets removed from the source distribution,
+  # as the version string is already built into it (see the onbuild versioningit hook):
+  "versioningit >=2.0.0, <3",  # disabled in sdist
 ]
 # setuptools build-backend override
 # https://setuptools.pypa.io/en/stable/build_meta.html
@@ -37,6 +39,7 @@ classifiers = [
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Topic :: Internet :: WWW/HTTP",
   "Topic :: Multimedia :: Sound/Audio",
   "Topic :: Multimedia :: Video",
@@ -92,6 +95,10 @@ streamlink = [
 
 # https://versioningit.readthedocs.io/en/stable/index.html
 [tool.versioningit]
+# Packagers: don't patch the `default-version` string while using the tarball built by GitHub from the tagged git commit!
+# Instead, use Streamlink's signed source distribution as package source, which has the correct version string built in.
+# This fallback `default-version` string is only used when not building from the sdist or a git repo with at least one tag.
+# See the versioningit comment at the very top of this file!
 default-version = "0.0.0+unknown"
 
 [tool.versioningit.vcs]
@@ -106,8 +113,8 @@ distance-dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
 method = "null"
 
 [tool.versioningit.onbuild]
-source-file = "src/streamlink/_version.py"
-build-file = "streamlink/_version.py"
+# When building the sdist or wheel, remove versioningit build-requirement and set the static version string
+method = { module = "build_backend.onbuild", value = "onbuild" }
 
 
 # https://docs.pytest.org/en/latest/reference/customize.html#configuration
@@ -186,21 +193,20 @@ select = [
   "DTZ",
   # flake8-implicit-str-concat
   "ISC",
+  # flake8-no-pep420
+  "INP",
   # flake8-pie
   "PIE",
+  # flake8-print
+  "T20",
   # flake8-pytest-style
   "PT",
   # flake8-quotes
   "Q",
   # flake8-tidy-imports
   "TID",
-  # explicitly select rules under the nursery-flag introduced in ruff 0.0.269
-  # remove once enabled via the "E" selector
-  "E111", "E112", "E113", "E114", "E115", "E116", "E117",
-  "E201", "E202", "E203", "E211", "E221", "E222", "E223",
-  "E224", "E225", "E226", "E227", "E228", "E231", "E251",
-  "E252", "E261", "E262", "E265", "E266", "E271", "E272",
-  "E273", "E274", "E275",
+  # Ruff-specific rules
+  "RUF",
 ]
 extend-ignore = [
   "A003",  # builtin-attribute-shadowing
@@ -217,11 +223,15 @@ extend-exclude = [
 
 [tool.ruff.per-file-ignores]
 "__init__.py" = ["F401"]
+"docs/**" = ["INP", "RUF012"]
+"script/**" = ["INP"]
 "src/streamlink/__init__.py" = ["I"]
 "src/streamlink/_version.py" = ["I"]
 "src/streamlink/plugin/api/useragents.py" = ["E501"]
-"src/streamlink/webbrowser/cdp/devtools/*" = ["E501"]
+"src/streamlink/plugins/*" = ["RUF012"]
+"src/streamlink/webbrowser/cdp/devtools/*" = ["E501", "F401"]
 "src/streamlink_cli/main.py" = ["PLW0603"]
+"tests/**" = ["RUF012"]
 
 [tool.ruff.isort]
 known-first-party = ["streamlink", "streamlink_cli"]

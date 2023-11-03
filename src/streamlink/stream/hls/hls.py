@@ -3,7 +3,7 @@ import re
 import struct
 from concurrent.futures import Future
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type, Union
 from urllib.parse import urlparse
 
 from requests import Response
@@ -14,7 +14,8 @@ from streamlink.exceptions import StreamError
 from streamlink.session import Streamlink
 from streamlink.stream.ffmpegmux import FFMPEGMuxer, MuxedStream
 from streamlink.stream.filtered import FilteredStream
-from streamlink.stream.hls_playlist import M3U8, ByteRange, Key, Map, Media, Segment, load as load_hls_playlist
+from streamlink.stream.hls.m3u8 import M3U8, M3U8Parser, parse_m3u8
+from streamlink.stream.hls.segment import ByteRange, HLSPlaylist, HLSSegment, Key, Map, Media
 from streamlink.stream.http import HTTPStream
 from streamlink.stream.segmented import SegmentedStreamReader, SegmentedStreamWorker, SegmentedStreamWriter
 from streamlink.utils.cache import LRUCache
@@ -23,12 +24,7 @@ from streamlink.utils.formatter import Formatter
 from streamlink.utils.times import now
 
 
-log = logging.getLogger(__name__)
-
-
-class Sequence(NamedTuple):
-    num: int
-    segment: Segment
+log = logging.getLogger(".".join(__name__.split(".")[:-1]))
 
 
 class ByteRangeOffset:
@@ -62,7 +58,7 @@ class ByteRangeOffset:
         return bytes_start, self._calc_end(bytes_start, byterange.range)
 
 
-class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
+class HLSStreamWriter(SegmentedStreamWriter[HLSSegment, Response]):
     WRITE_CHUNK_SIZE = 8192
 
     reader: "HLSStreamReader"
@@ -136,7 +132,7 @@ class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
 
         return AES.new(self.key_data, AES.MODE_CBC, iv)
 
-    def create_request_params(self, num: int, segment: Union[Segment, Map], is_map: bool):
+    def create_request_params(self, num: int, segment: Union[HLSSegment, Map], is_map: bool):
         request_params = dict(self.reader.request_params)
         headers = request_params.pop("headers", {})
 
@@ -151,50 +147,50 @@ class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
 
         return request_params
 
-    def put(self, sequence: Optional[Sequence]):
+    def put(self, segment: Optional[HLSSegment]):
         if self.closed:
             return
 
-        if sequence is None:
+        if segment is None:
             self.queue(None, None)
             return
 
         # always queue the segment's map first if it exists
-        if sequence.segment.map is not None:
-            cached_map_future = self.map_cache.get(sequence.segment.map.uri)
+        if segment.map is not None:
+            cached_map_future = self.map_cache.get(segment.map.uri)
             # use cached map request if not a stream discontinuity
             # don't fetch multiple times when map request of previous segment is still pending
-            if cached_map_future is not None and not sequence.segment.discontinuity:
+            if cached_map_future is not None and not segment.discontinuity:
                 future = cached_map_future
             else:
-                future = self.executor.submit(self.fetch_map, sequence)
-                self.map_cache.set(sequence.segment.map.uri, future)
-            self.queue(sequence, future, True)
+                future = self.executor.submit(self.fetch_map, segment)
+                self.map_cache.set(segment.map.uri, future)
+            self.queue(segment, future, True)
 
         # regular segment request
-        future = self.executor.submit(self.fetch, sequence)
-        self.queue(sequence, future, False)
+        future = self.executor.submit(self.fetch, segment)
+        self.queue(segment, future, False)
 
-    def fetch(self, sequence: Sequence) -> Optional[Response]:
+    def fetch(self, segment: HLSSegment) -> Optional[Response]:
         try:
             return self._fetch(
-                sequence.segment.uri,
+                segment.uri,
                 stream=self.stream_data,
-                **self.create_request_params(sequence.num, sequence.segment, False),
+                **self.create_request_params(segment.num, segment, False),
             )
         except StreamError as err:
-            log.error(f"Failed to fetch segment {sequence.num}: {err}")
+            log.error(f"Failed to fetch segment {segment.num}: {err}")
 
-    def fetch_map(self, sequence: Sequence) -> Optional[Response]:
-        _map: Map = sequence.segment.map  # type: ignore[assignment]  # map is not None
+    def fetch_map(self, segment: HLSSegment) -> Optional[Response]:
+        _map: Map = segment.map  # type: ignore[assignment]  # map is not None
         try:
             return self._fetch(
                 _map.uri,
                 stream=False,
-                **self.create_request_params(sequence.num, _map, True),
+                **self.create_request_params(segment.num, _map, True),
             )
         except StreamError as err:
-            log.error(f"Failed to fetch map for segment {sequence.num}: {err}")
+            log.error(f"Failed to fetch map for segment {segment.num}: {err}")
 
     def _fetch(self, url: str, **request_params) -> Optional[Response]:
         if self.closed or not self.retries:  # pragma: no cover
@@ -208,22 +204,22 @@ class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
             **request_params,
         )
 
-    def should_filter_sequence(self, sequence: Sequence) -> bool:
-        return self.ignore_names is not None and self.ignore_names.search(sequence.segment.uri) is not None
+    def should_filter_segment(self, segment: HLSSegment) -> bool:
+        return self.ignore_names is not None and self.ignore_names.search(segment.uri) is not None
 
-    def write(self, sequence: Sequence, result: Response, *data):
-        if not self.should_filter_sequence(sequence):
-            log.debug(f"Writing segment {sequence.num} to output")
+    def write(self, segment: HLSSegment, result: Response, *data):
+        if not self.should_filter_segment(segment):
+            log.debug(f"Writing segment {segment.num} to output")
 
             written_once = self.reader.buffer.written_once
             try:
-                return self._write(sequence, result, *data)
+                return self._write(segment, result, *data)
             finally:
                 is_paused = self.reader.is_paused()
 
                 # Depending on the filtering implementation, the segment's discontinuity attribute can be missing.
                 # Also check if the output will be resumed after data has already been written to the buffer before.
-                if sequence.segment.discontinuity or is_paused and written_once:
+                if segment.discontinuity or is_paused and written_once:
                     log.warning(
                         "Encountered a stream discontinuity. This is unsupported and will result in incoherent output data.",
                     )
@@ -234,7 +230,7 @@ class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
                     self.reader.resume()
 
         else:
-            log.debug(f"Discarding segment {sequence.num}")
+            log.debug(f"Discarding segment {segment.num}")
 
             # Read and discard any remaining HTTP response data in the response connection.
             # Unread data in the HTTPResponse connection blocks the connection from being released back to the pool.
@@ -245,10 +241,10 @@ class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
                 log.info("Filtering out segments and pausing stream output")
                 self.reader.pause()
 
-    def _write(self, sequence: Sequence, result: Response, is_map: bool):
-        if sequence.segment.key and sequence.segment.key.method != "NONE":
+    def _write(self, segment: HLSSegment, result: Response, is_map: bool):
+        if segment.key and segment.key.method != "NONE":
             try:
-                decryptor = self.create_decryptor(sequence.segment.key, sequence.num)
+                decryptor = self.create_decryptor(segment.key, segment.num)
             except (StreamError, ValueError) as err:
                 log.error(f"Failed to create decryptor: {err}")
                 self.close()
@@ -264,10 +260,10 @@ class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
                 chunk = unpad(decrypted_chunk, AES.block_size, style="pkcs7")
                 self.reader.buffer.write(chunk)
             except (ChunkedEncodingError, ContentDecodingError, ConnectionError) as err:
-                log.error(f"Download of segment {sequence.num} failed: {err}")
+                log.error(f"Download of segment {segment.num} failed: {err}")
                 return
             except ValueError as err:
-                log.error(f"Error while decrypting segment {sequence.num}: {err}")
+                log.error(f"Error while decrypting segment {segment.num}: {err}")
                 return
 
         else:
@@ -275,16 +271,16 @@ class HLSStreamWriter(SegmentedStreamWriter[Sequence, Response]):
                 for chunk in result.iter_content(self.WRITE_CHUNK_SIZE):
                     self.reader.buffer.write(chunk)
             except (ChunkedEncodingError, ContentDecodingError, ConnectionError) as err:
-                log.error(f"Download of segment {sequence.num} failed: {err}")
+                log.error(f"Download of segment {segment.num} failed: {err}")
                 return
 
         if is_map:
-            log.debug(f"Segment initialization {sequence.num} complete")
+            log.debug(f"Segment initialization {segment.num} complete")
         else:
-            log.debug(f"Segment {sequence.num} complete")
+            log.debug(f"Segment {segment.num} complete")
 
 
-class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
+class HLSStreamWorker(SegmentedStreamWorker[HLSSegment, Response]):
     reader: "HLSStreamReader"
     writer: "HLSStreamWriter"
     stream: "HLSStream"
@@ -298,8 +294,9 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
         self.playlist_end: Optional[int] = None
         self.playlist_targetduration: float = 0
         self.playlist_sequence: int = -1
-        self.playlist_sequences: List[Sequence] = []
-        self.playlist_sequences_last: datetime = now()
+        self.playlist_sequence_last: datetime = now()
+        self.playlist_segments: List[HLSSegment] = []
+
         self.playlist_reload_last: datetime = now()
         self.playlist_reload_time: float = 6
         self.playlist_reload_time_override = self.session.options.get("hls-playlist-reload-time")
@@ -327,10 +324,6 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
 
         return res
 
-    # TODO: rename to _parse_playlist
-    def _reload_playlist(self, *args, **kwargs):
-        return load_hls_playlist(*args, **kwargs)
-
     def reload_playlist(self):
         if self.closed:  # pragma: no cover
             return
@@ -341,7 +334,7 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
         res = self._fetch_playlist()
 
         try:
-            playlist = self._reload_playlist(res)
+            playlist = parse_m3u8(res, parser=self.stream.__parser__)
         except ValueError as err:
             raise StreamError(err) from err
 
@@ -351,55 +344,52 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
         if playlist.iframes_only:
             raise StreamError("Streams containing I-frames only are not playable")
 
-        media_sequence = playlist.media_sequence or 0
-        sequences = [Sequence(media_sequence + i, s)
-                     for i, s in enumerate(playlist.segments)]
-
         self.playlist_targetduration = playlist.targetduration or 0
-        self.playlist_reload_time = self._playlist_reload_time(playlist, sequences)
+        self.playlist_reload_time = self._playlist_reload_time(playlist)
 
-        if sequences:
-            self.process_sequences(playlist, sequences)
+        if playlist.segments:
+            self.process_segments(playlist)
 
-    def _playlist_reload_time(self, playlist: M3U8, sequences: List[Sequence]) -> float:
-        if self.playlist_reload_time_override == "segment" and sequences:
-            return sequences[-1].segment.duration
-        if self.playlist_reload_time_override == "live-edge" and sequences:
-            return sum(s.segment.duration for s in sequences[-max(1, self.live_edge - 1):])
-        if type(self.playlist_reload_time_override) is float and self.playlist_reload_time_override > 0:  # noqa: E721
+    def _playlist_reload_time(self, playlist: M3U8[HLSSegment, HLSPlaylist]) -> float:
+        if self.playlist_reload_time_override == "segment" and playlist.segments:
+            return playlist.segments[-1].duration
+        if self.playlist_reload_time_override == "live-edge" and playlist.segments:
+            return sum(s.duration for s in playlist.segments[-max(1, self.live_edge - 1):])
+        if type(self.playlist_reload_time_override) is float and self.playlist_reload_time_override > 0:
             return self.playlist_reload_time_override
         if playlist.targetduration:
             return playlist.targetduration
-        if sequences:
-            return sum(s.segment.duration for s in sequences[-max(1, self.live_edge - 1):])
+        if playlist.segments:
+            return sum(s.duration for s in playlist.segments[-max(1, self.live_edge - 1):])
 
         return self.playlist_reload_time
 
-    def process_sequences(self, playlist: M3U8, sequences: List[Sequence]) -> None:
-        first_sequence, last_sequence = sequences[0], sequences[-1]
+    def process_segments(self, playlist: M3U8[HLSSegment, HLSPlaylist]) -> None:
+        segments = playlist.segments
+        first_segment, last_segment = segments[0], segments[-1]
 
-        if first_sequence.segment.key and first_sequence.segment.key.method != "NONE":
+        if first_segment.key and first_segment.key.method != "NONE":
             log.debug("Segments in this playlist are encrypted")
 
-        self.playlist_changed = ([s.num for s in self.playlist_sequences] != [s.num for s in sequences])
-        self.playlist_sequences = sequences
+        self.playlist_changed = ([s.num for s in self.playlist_segments] != [s.num for s in segments])
+        self.playlist_segments = segments
 
         if not self.playlist_changed:
             self.playlist_reload_time = max(self.playlist_reload_time / 2, 1)
 
         if playlist.is_endlist:
-            self.playlist_end = last_sequence.num
+            self.playlist_end = last_segment.num
 
         if self.playlist_sequence < 0:
             if self.playlist_end is None and not self.hls_live_restart:
-                edge_index = -(min(len(sequences), max(int(self.live_edge), 1)))
-                edge_sequence = sequences[edge_index]
-                self.playlist_sequence = edge_sequence.num
+                edge_index = -(min(len(segments), max(int(self.live_edge), 1)))
+                edge_segment = segments[edge_index]
+                self.playlist_sequence = edge_segment.num
             else:
-                self.playlist_sequence = first_sequence.num
+                self.playlist_sequence = first_segment.num
 
-    def valid_sequence(self, sequence: Sequence) -> bool:
-        return sequence.num >= self.playlist_sequence
+    def valid_segment(self, segment: HLSSegment) -> bool:
+        return segment.num >= self.playlist_sequence
 
     def _segment_queue_timing_threshold_reached(self) -> bool:
         if self.segment_queue_timing_threshold_factor <= 0:
@@ -409,31 +399,31 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
             self.SEGMENT_QUEUE_TIMING_THRESHOLD_MIN,
             self.playlist_targetduration * self.segment_queue_timing_threshold_factor,
         )
-        if now() <= self.playlist_sequences_last + timedelta(seconds=threshold):
+        if now() <= self.playlist_sequence_last + timedelta(seconds=threshold):
             return False
 
         log.warning(f"No new segments in playlist for more than {threshold:.2f}s. Stopping...")
         return True
 
     @staticmethod
-    def duration_to_sequence(duration: float, sequences: List[Sequence]) -> int:
+    def duration_to_sequence(duration: float, segments: List[HLSSegment]) -> int:
         d = 0.0
         default = -1
 
-        sequences_order = sequences if duration >= 0 else reversed(sequences)
+        segments_order = segments if duration >= 0 else reversed(segments)
 
-        for sequence in sequences_order:
+        for segment in segments_order:
             if d >= abs(duration):
-                return sequence.num
-            d += sequence.segment.duration
-            default = sequence.num
+                return segment.num
+            d += segment.duration
+            default = segment.num
 
         # could not skip far enough, so return the default
         return default
 
     def iter_segments(self):
         self.playlist_reload_last \
-            = self.playlist_sequences_last \
+            = self.playlist_sequence_last \
             = now()
 
         try:
@@ -450,12 +440,12 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
             self.duration_offset_start = -self.duration_offset_start
 
         if self.duration_offset_start != 0:
-            self.playlist_sequence = self.duration_to_sequence(self.duration_offset_start, self.playlist_sequences)
+            self.playlist_sequence = self.duration_to_sequence(self.duration_offset_start, self.playlist_segments)
 
-        if self.playlist_sequences:
+        if self.playlist_segments:
             log.debug("; ".join([
-                f"First Sequence: {self.playlist_sequences[0].num}",
-                f"Last Sequence: {self.playlist_sequences[-1].num}",
+                f"First Sequence: {self.playlist_segments[0].num}",
+                f"Last Sequence: {self.playlist_segments[-1].num}",
             ]))
             log.debug("; ".join([
                 f"Start offset: {self.duration_offset_start}",
@@ -467,12 +457,26 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
         total_duration = 0
         while not self.closed:
             queued = False
-            for sequence in filter(self.valid_sequence, self.playlist_sequences):
-                log.debug(f"Adding segment {sequence.num} to queue")
-                yield sequence
+            for segment in self.playlist_segments:
+                if not self.valid_segment(segment):
+                    continue
+
+                log.debug(f"Adding segment {segment.num} to queue")
+                offset = segment.num - self.playlist_sequence
+                if offset > 0:
+                    log.warning(
+                        (
+                            f"Skipped segments {self.playlist_sequence}-{segment.num - 1} after playlist reload. "
+                            if offset > 1 else
+                            f"Skipped segment {self.playlist_sequence} after playlist reload. "
+                        )
+                        + "This is unsupported and will result in incoherent output data.",
+                    )
+
+                yield segment
                 queued = True
 
-                total_duration += sequence.segment.duration
+                total_duration += segment.duration
                 if self.duration_limit and total_duration >= self.duration_limit:
                     log.info(f"Stopping stream early after {self.duration_limit}")
                     return
@@ -480,14 +484,14 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
                 if self.closed:  # pragma: no cover
                     return
 
-                self.playlist_sequence = sequence.num + 1
+                self.playlist_sequence = segment.num + 1
 
             # End of stream
             if self.closed or self.playlist_end is not None and (not queued or self.playlist_sequence > self.playlist_end):
                 return
 
             if queued:
-                self.playlist_sequences_last = now()
+                self.playlist_sequence_last = now()
             elif self._segment_queue_timing_threshold_reached():
                 return
 
@@ -511,7 +515,7 @@ class HLSStreamWorker(SegmentedStreamWorker[Sequence, Response]):
                     log.warning(f"Failed to reload playlist: {err}")
 
 
-class HLSStreamReader(FilteredStream, SegmentedStreamReader[Sequence, Response]):
+class HLSStreamReader(FilteredStream, SegmentedStreamReader[HLSSegment, Response]):
     __worker__ = HLSStreamWorker
     __writer__ = HLSStreamWriter
 
@@ -596,6 +600,7 @@ class HLSStream(HTTPStream):
 
     __shortname__ = "hls"
     __reader__ = HLSStreamReader
+    __parser__: ClassVar[Type[M3U8Parser[M3U8[HLSSegment, HLSPlaylist], HLSSegment, HLSPlaylist]]] = M3U8Parser
 
     def __init__(
         self,
@@ -668,11 +673,6 @@ class HLSStream(HTTPStream):
 
         return res
 
-    # TODO: rename to _parse_variant_playlist
-    @classmethod
-    def _get_variant_playlist(cls, *args, **kwargs):
-        return load_hls_playlist(*args, **kwargs)
-
     @classmethod
     def parse_variant_playlist(
         cls,
@@ -710,7 +710,7 @@ class HLSStream(HTTPStream):
         res = cls._fetch_variant_playlist(session, url, **request_args)
 
         try:
-            multivariant = cls._get_variant_playlist(res)
+            multivariant = parse_m3u8(res, parser=cls.__parser__)
         except ValueError as err:
             raise OSError(f"Failed to parse playlist: {err}") from err
 
@@ -718,7 +718,10 @@ class HLSStream(HTTPStream):
         stream: Union["HLSStream", "MuxedHLSStream"]
         streams: Dict[str, Union["HLSStream", "MuxedHLSStream"]] = {}
 
-        for playlist in filter(lambda p: not p.is_iframe, multivariant.playlists):
+        for playlist in multivariant.playlists:
+            if playlist.is_iframe:
+                continue
+
             names: Dict[str, Optional[str]] = dict(name=None, pixels=None, bitrate=None)
             audio_streams = []
             fallback_audio: List[Media] = []

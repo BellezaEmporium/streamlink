@@ -50,11 +50,11 @@ def get_formatter(plugin: Plugin):
         {
             "url": lambda: args.url,
             "plugin": lambda: plugin.module,
-            "id": lambda: plugin.get_id(),
-            "author": lambda: plugin.get_author(),
-            "category": lambda: plugin.get_category(),
-            "game": lambda: plugin.get_category(),
-            "title": lambda: plugin.get_title(),
+            "id": plugin.get_id,
+            "author": plugin.get_author,
+            "category": plugin.get_category,
+            "game": plugin.get_category,
+            "title": plugin.get_title,
             "time": lambda: datetime.now(tz=LOCALTIMEZONE),
         },
         {
@@ -417,7 +417,7 @@ def handle_stream(plugin: Plugin, streams: Dict[str, Stream], stream_name: str) 
 
         formatter = get_formatter(plugin)
 
-        for name in [stream_name] + alt_streams:
+        for name in [stream_name, *alt_streams]:
             stream = streams[name]
             stream_type = type(stream).shortname()
 

@@ -3,16 +3,18 @@ from typing import Optional, Tuple, Union
 
 import pytest
 
-from streamlink.stream.hls_playlist import (
+from streamlink.stream.hls import (
+    M3U8,
     ByteRange,
     DateRange,
     ExtInf,
+    HLSPlaylist,
+    HLSSegment,
     M3U8Parser,
     Media,
     Resolution,
-    Segment,
     StreamInfo,
-    load,
+    parse_m3u8,
     parse_tag,
 )
 from tests.resources import text
@@ -127,8 +129,8 @@ def test_split_tag(string: str, expected: Union[Tuple[str, str], Tuple[None, Non
 ])
 def test_parse_attributes(caplog: pytest.LogCaptureFixture, attributes: str, log: bool, expected: dict):
     assert M3U8Parser.parse_attributes(attributes) == expected
-    assert [(r.module, r.levelname, r.message) for r in caplog.records] == ([
-        ("hls_playlist", "warning", "Discarded invalid attributes list"),
+    assert [(record.name, record.levelname, record.message) for record in caplog.records] == ([
+        ("streamlink.stream.hls.m3u8", "warning", "Discarded invalid attributes list"),
     ] if log else [])
 
 
@@ -173,8 +175,8 @@ def test_parse_extinf(string: str, expected: ExtInf):
 ])
 def test_parse_hex(caplog: pytest.LogCaptureFixture, string: Optional[str], log: bool, expected: Optional[bytes]):
     assert M3U8Parser.parse_hex(string) == expected
-    assert [(r.module, r.levelname, r.message) for r in caplog.records] == ([
-        ("hls_playlist", "warning", "Discarded invalid hexadecimal-sequence attribute value"),
+    assert [(record.name, record.levelname, record.message) for record in caplog.records] == ([
+        ("streamlink.stream.hls.m3u8", "warning", "Discarded invalid hexadecimal-sequence attribute value"),
     ] if log else [])
 
 
@@ -187,8 +189,8 @@ def test_parse_hex(caplog: pytest.LogCaptureFixture, string: Optional[str], log:
 ])
 def test_parse_iso8601(caplog: pytest.LogCaptureFixture, string: Optional[str], log: bool, expected: Optional[datetime]):
     assert M3U8Parser.parse_iso8601(string) == expected
-    assert [(r.module, r.levelname, r.message) for r in caplog.records] == ([
-        ("hls_playlist", "warning", "Discarded invalid ISO8601 attribute value"),
+    assert [(record.name, record.levelname, record.message) for record in caplog.records] == ([
+        ("streamlink.stream.hls.m3u8", "warning", "Discarded invalid ISO8601 attribute value"),
     ] if log else [])
 
 
@@ -212,9 +214,9 @@ def test_parse_resolution(string: str, expected: Resolution):
 
 
 class TestHLSPlaylist:
-    def test_load(self):
+    def test_load(self) -> None:
         with text("hls/test_1.m3u8") as m3u8_fh:
-            playlist = load(m3u8_fh.read(), "http://test.se/")
+            playlist = parse_m3u8(m3u8_fh.read(), "http://test.se/", parser=M3U8Parser)
 
         assert playlist.media == [
             Media(
@@ -382,9 +384,9 @@ class TestHLSPlaylist:
             ),
         ]
 
-    def test_parse_date(self):
+    def test_parse_date(self) -> None:
         with text("hls/test_date.m3u8") as m3u8_fh:
-            playlist = load(m3u8_fh.read(), "http://test.se/")
+            playlist = parse_m3u8(m3u8_fh.read(), "http://test.se/", parser=M3U8Parser)
 
         start_date = datetime(year=2000, month=1, day=1, hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)
         end_date = datetime(year=2000, month=1, day=1, hour=0, minute=1, second=0, microsecond=0, tzinfo=UTC)
@@ -497,8 +499,9 @@ class TestHLSPlaylist:
             ),
         ]
         assert list(playlist.segments) == [
-            Segment(
+            HLSSegment(
                 uri="http://test.se/segment0-15.ts",
+                num=0,
                 duration=15.0,
                 title="live",
                 date=start_date,
@@ -507,8 +510,9 @@ class TestHLSPlaylist:
                 byterange=None,
                 map=None,
             ),
-            Segment(
+            HLSSegment(
                 uri="http://test.se/segment15-30.5.ts",
+                num=1,
                 duration=15.5,
                 title="live",
                 date=start_date + delta_15,
@@ -517,8 +521,9 @@ class TestHLSPlaylist:
                 byterange=None,
                 map=None,
             ),
-            Segment(
+            HLSSegment(
                 uri="http://test.se/segment30.5-60.ts",
+                num=2,
                 duration=29.5,
                 title="live",
                 date=start_date + delta_30,
@@ -527,8 +532,9 @@ class TestHLSPlaylist:
                 byterange=None,
                 map=None,
             ),
-            Segment(
+            HLSSegment(
                 uri="http://test.se/segment60-.ts",
+                num=3,
                 duration=60.0,
                 title="live",
                 date=start_date + delta_60,
@@ -547,3 +553,16 @@ class TestHLSPlaylist:
                == [None, True, True, True, False, False, False, True, True, None]
         assert [playlist.is_date_in_daterange(playlist.segments[3].date, daterange) for daterange in playlist.dateranges] \
                == [None, True, True, True, False, False, False, False, False, None]
+
+    def test_parse_bandwidth(self) -> None:
+        with text("hls/test_multivariant_bandwidth.m3u8") as m3u8_fh:
+            playlist: M3U8[HLSSegment, HLSPlaylist] = parse_m3u8(m3u8_fh.read(), "http://mocked/", parser=M3U8Parser)
+
+        assert [(pl.stream_info.video, pl.stream_info.bandwidth) for pl in playlist.playlists] == [
+            ("chunked", 0),
+            ("audio_only", 0),
+            ("720p60", 3000000),
+            ("480p30", 1500000),
+            ("360p30", 700000),
+            ("160p30", 300000),
+        ]

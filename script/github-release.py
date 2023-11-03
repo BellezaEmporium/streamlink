@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import annotations
+
 import argparse
 import logging
 import re
@@ -110,7 +112,7 @@ class Git:
     @staticmethod
     def _output(*gitargs, **runkwargs) -> str:
         completedprocess = subprocess.run(
-            ["git", "--no-pager"] + list(map(str, gitargs)),
+            ["git", "--no-pager", *map(str, gitargs)],
             capture_output=True,
             check=True,
             **runkwargs,
@@ -345,7 +347,7 @@ class GitHubAPI:
                 authors[email].commits += 1
 
         # sort by commits in descending order and by login name in ascending order
-        return sorted(  # noqa: C414
+        return sorted(
             sorted(
                 authors.values(),
                 key=lambda author: author.name,
@@ -364,7 +366,7 @@ class Release:
 
     @staticmethod
     def _read_file(path: Path):
-        with open(path, "r") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             contents = fh.read()
 
         if not contents:

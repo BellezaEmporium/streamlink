@@ -1,5 +1,63 @@
 # Changelog
 
+## streamlink 6.5.0 (2023-12-16)
+
+Release highlights:
+
+- Fixed: `UserWarning` being emitted by recent `pycountry` releases when parsing certain language codes ([#5722](https://github.com/streamlink/streamlink/pull/5722))
+- Fixed: trace logging setup in `WebsocketClient` implementation ([#5705](https://github.com/streamlink/streamlink/pull/5705))
+- Updated plugins:
+  - btv: switched to HLS multivariant playlists ([#5698](https://github.com/streamlink/streamlink/pull/5698))
+  - gulli: rewritten plugin ([#5725](https://github.com/streamlink/streamlink/pull/5725))
+  - twitch: removed/disabled `--twitch-disable-reruns` ([#5704](https://github.com/streamlink/streamlink/pull/5704))
+  - twitch: enabled `check_streams` HLS option, to ensure early stream availability without querying the delayed Twitch API ([#5708](https://github.com/streamlink/streamlink/pull/5708))
+  - twitch: removed unnecessary Twitch API error messages for offline channels ([#5709](https://github.com/streamlink/streamlink/pull/5709))
+  - wasd: removed plugin ([#5711](https://github.com/streamlink/streamlink/pull/5711))
+- Build: added support for `versioningit >=3.0.0`, with backward compatibility ([#5721](https://github.com/streamlink/streamlink/pull/5721))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.4.2...6.5.0)
+
+
+## streamlink 6.4.2 (2023-11-28)
+
+Patch release:
+
+- Fixed: HLS segment maps being written to the output multiple times ([#5689](https://github.com/streamlink/streamlink/pull/5689))
+- Fixed plugins:
+  - bilibili: rewritten plugin ([#5693](https://github.com/streamlink/streamlink/pull/5693))
+  - piczel: updated HLS URLs ([#5690](https://github.com/streamlink/streamlink/pull/5690))
+  - ssh101: fixed stream URL retrieval ([#5686](https://github.com/streamlink/streamlink/pull/5686))
+- Docs: added missing `Cache` API docs ([#5688](https://github.com/streamlink/streamlink/pull/5688))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.4.1...6.4.2)
+
+
+## streamlink 6.4.1 (2023-11-22)
+
+Patch release:
+
+- Fixed: libxml2 2.12.0 compatibility ([#5682](https://github.com/streamlink/streamlink/pull/5682))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.4.0...6.4.1)
+
+
+## streamlink 6.4.0 (2023-11-21)
+
+Release highlights:
+
+- Added: missing support for dynamic DASH manifests with `SegmentList`s ([#5654](https://github.com/streamlink/streamlink/pull/5654), [#5657](https://github.com/streamlink/streamlink/pull/5657))
+- Added: warning log message when skipping DASH segments between manifest reloads ([#5659](https://github.com/streamlink/streamlink/pull/5659))
+- Added plugins: nasaplus ([#5664](https://github.com/streamlink/streamlink/pull/5664))
+- Updated plugins:
+  - raiplay: added VOD support with authentication `--raiplay-email` / `--raiplay-password` / `--raiplay-purge-credentials` ([#5662](https://github.com/streamlink/streamlink/pull/5662))
+  - telemadrid: fixed XPath query ([#5653](https://github.com/streamlink/streamlink/pull/5653))
+  - tvp: fixed tvp.info ([#5645](https://github.com/streamlink/streamlink/pull/5645))
+  - youtube: fixed video ID retrieval ([#5673](https://github.com/streamlink/streamlink/pull/5673))
+- Docs: added validation schema API docs and API guide ([#5652](https://github.com/streamlink/streamlink/pull/5652), [#5655](https://github.com/streamlink/streamlink/pull/5655))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.3.1...6.4.0)
+
+
 ## streamlink 6.3.1 (2023-10-26)
 
 Patch release:

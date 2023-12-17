@@ -1,3 +1,11 @@
+"""
+$description A live streaming service for Latin American TV channels.
+$url opencaster.com
+$type live
+$metadata title
+$region Peru
+"""
+
 import logging
 import re
 

@@ -1,3 +1,10 @@
+"""
+$description Colombian hosting services for live TV channels. Not to be confused with Teveo.com.cu.
+$url teveo.com.co
+$type live
+$region Colombia
+"""
+
 import logging
 import re
 
@@ -7,8 +14,9 @@ from streamlink.stream.hls import HLSStream
 
 log = logging.getLogger(__name__)
 
+# haven't found better.
 @pluginmatcher(re.compile(r"https?://teveo\.com\.co/player/(.*?)\.js"))
-class Teveo(Plugin):
+class TeveoCo(Plugin):
     _playlist_re = re.compile(r'"src":"(.*?)"')
     stream_schema = validate.Schema(
         validate.transform(_playlist_re.search),
@@ -21,4 +29,4 @@ class Teveo(Plugin):
             log.error('No URL has been found, either link is incorrect or no resource file has been given')
         return HLSStream.parse_variant_playlist(self.session, url)
 
-__plugin__ = Teveo
+__plugin__ = TeveoCo

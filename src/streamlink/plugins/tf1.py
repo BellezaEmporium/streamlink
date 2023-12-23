@@ -10,7 +10,6 @@ $region France
 import json
 import logging
 import re
-from urllib.parse import urlparse
 
 from streamlink.plugin import Plugin, PluginError, pluginmatcher
 from streamlink.plugin.api import useragents, validate
@@ -53,11 +52,6 @@ class TF1(Plugin):
     auth_url = "https://compte.tf1.fr/accounts.login"
     session_url = "https://www.tf1.fr/token/gigya/web"
     gigya_api_key = '3_hWgJdARhz_7l1oOp3a8BDLoR9cuWZpUaKG4aqF7gum9_iK3uTZ2VlDBl8ANf8FVk'
-    # Necessary to get the correct cookies launched for delivery.
-    user_signature = ""
-    user_uid = ""
-    user_timestamp = ""
-    user_token = ""
 
 
     def _get_channel(self):
@@ -132,17 +126,13 @@ class TF1(Plugin):
 
             # If TF1 login is successful, get Gigya token.
             if res.status_code == 200:
-                self.user_signature = res.json()['userInfo']['UIDSignature']
-                self.user_uid = res.json()['userInfo']['UID']
-                self.user_timestamp = int(res.json()['userInfo']['signatureTimestamp'])
-
                 # make the session request to get the correct cookies
                 session_res = self.session.http.post(
                     self.session_url,
                     data=json.dumps({
-                        "uid": self.user_uid,
-                        "signature": self.user_signature,
-                        "timestamp": self.user_timestamp,
+                        "uid": res.json()['userInfo']['UID'],
+                        "signature": res.json()['userInfo']['UIDSignature'],
+                        "timestamp": int(res.json()['userInfo']['signatureTimestamp']),
                         "consent_ids": ["1", "2", "3", "4", "10001", "10003", "10005", "10007", "10013", "10015", "10017", "10019", "10009", "10011", "13002", "13001", "10004", "10014", "10016", "10018", "10020", "10010", "10012", "10006", "10008"]
                     })
                 )

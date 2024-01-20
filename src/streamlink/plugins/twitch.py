@@ -44,7 +44,6 @@ from streamlink.stream.hls import (
     parse_tag,
 )
 from streamlink.stream.http import HTTPStream
-from streamlink.utils.args import keyvalue
 from streamlink.utils.parse import parse_json, parse_qsd
 from streamlink.utils.random import CHOICES_ALPHA_NUM, random_token
 from streamlink.utils.times import fromtimestamp, hours_minutes_seconds_float
@@ -565,7 +564,12 @@ class TwitchClientIntegrity:
                     return await client_session.evaluate(js_get_integrity_token, timeout=eval_timeout)
 
         try:
-            client_integrity: Optional[str] = CDPClient.launch(session, acquire_client_integrity_token)
+            client_integrity: Optional[str] = CDPClient.launch(
+                session,
+                acquire_client_integrity_token,
+                # headless mode gets detected by Twitch, so we have to disable it regardless the user config
+                headless=False,
+            )
         except WebbrowserError as err:
             log.error(f"{type(err).__name__}: {err}")
             return None
@@ -650,7 +654,7 @@ class TwitchClientIntegrity:
 @pluginargument(
     "api-header",
     metavar="KEY=VALUE",
-    type=keyvalue,
+    type="keyvalue",
     action="append",
     help="""
         A header to add to each Twitch API HTTP request.
@@ -663,7 +667,7 @@ class TwitchClientIntegrity:
 @pluginargument(
     "access-token-param",
     metavar="KEY=VALUE",
-    type=keyvalue,
+    type="keyvalue",
     action="append",
     help="""
         A parameter to add to the API request for acquiring the streaming access token.

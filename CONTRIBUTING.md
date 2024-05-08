@@ -9,17 +9,33 @@ A bug is a *demonstrable problem* that is caused by the **latest version** of th
 
 Please read the following guidelines before you [report an issue][issues]:
 
-1. **See if the issue is already known** — check the list of [known issues][known-issues].
+1. **Use the GitHub issue search**
 
-2. **Use the GitHub issue search** — check if the issue has already been reported. If it has been, please comment on the existing issue.
+   Check if the issue has already been reported. If it has been and is still unresolved, then please comment on the existing issue.
 
-3. **Check if the issue has been fixed** — the latest `master` or development branch may already contain a fix.
+   Please avoid comments like "+1", "me too", etc., as they don't contribute to solving the issue and instead unnecessarily notify users subscribed to the issue or activities of the entire repository. Instead, use GitHub's notification feature on specific issues or pull requests via the sidebar on the right in order to receive status updates, or click the watch button at the top.
 
-4. **Isolate the demonstrable problem** — make sure that the code in the project's repository is *definitely* responsible for the issue.
+2. **Check if the issue has been resolved**
 
-5. **Format your issue report** — [well formatted texts][mastering-markdown] will make it much easier for developers to understand your report.
+   The `master` branch may already contain a fix, so please have a look at the recent commit history first. Don't comment on commits and instead open a new thread on the issue tracker if you have found a mistake in a code commit.
 
-Please try to be as detailed as possible in your report too. What is your environment? What steps will reproduce the issue? What would you expect the outcome to be? All these details will help people to assess and fix any potential bugs. The various issue templates will aid you in structuring your report when submitting a new issue. Thank you!
+   Resolved issues or merged pull requests should never be commented on and a new issue should be opened if something is still not working or has stopped working again. But before opening a new issue, check that you are indeed using the latest stable or development version.
+
+3. **Isolate the demonstrable problem**
+
+   Make sure that the code in the project's repository is *definitely* responsible for the issue by excluding external factors which may influence the results.
+
+   These external factors can be specific configurations in the used environment, the connection to a specific website or streaming service, the usage of VPNs or proxy servers, and many other things. Please keep that in mind when reporting issues.
+
+   The project maintainers must be able to reproduce the issue you're trying to report, which is the reason why **a full debug log is required** when reporting plugin issues or general bugs, as it includes important information about the environment Streamlink is run in.
+
+4. **Format your issue report**
+
+   [Well formatted texts][mastering-markdown] will make it much easier for developers to understand your report.
+
+   Please at the very least put your (additional) log output or code snippets into markdown code-blocks (surrounded by triple backticks - see the link above).
+
+   The various issue templates will aid you in structuring your report when submitting a new issue. Thank you!
 
 
 ## Feature requests
@@ -29,53 +45,90 @@ Feature requests are welcome, but take a moment to find out whether your idea fi
 
 ## Plugin requests
 
-Plugin submissions and requests are a great way to improve Streamlink. Requests should be as detailed as possible and dedicated to only a single streaming service. Information about the service as well as explicit URLs for live streams are required, as are details regarding the website, what it is, who runs it, how it adds to Streamlink, etc. This allows for easier plugin review and implementation. We reserve the right to refuse to implement, develop, or update any plugin. In addition we may remove existing plugins at our own discretion.
+Plugin submissions and requests are a great way to improve Streamlink. Requests should be as detailed as possible and dedicated to only a single streaming website/service.
 
-Plugins which fall under the following categories will not be implemented or considered and the request will be closed:
+Information about the website, as well as explicit URLs from your web browser's URL address bar are required, as are details regarding the website, what it is, who it is run by, and more. This allows for easier plugin review and implementation. We reserve the right to refuse to implement, develop, or update any plugin. In addition, we may remove existing plugins at our own discretion at any time without explanation.
 
-1. Any kind of streaming service that uses DRM protection
+Before you request a plugin, please be aware that this will merely be a suggestion for the project maintainers (or anyone else) to have a look at the website and implement a new plugin for it. In the vast majority of cases, no one except you will initially have an interest in such a plugin, so you should think about whether it will be useful for other users of Streamlink.
 
-2. Sites which are hosting stolen content as their main source of content
+Implementing new plugins can be a lot of effort, as well as keeping them maintained. Providing plugin code in a pull request written on your own after it has been discussed and approved in the request issue is therefore much appreciated, if the code quality is acceptable. Further assistance in plugin maintenance via plugin issues or bugfix pull requests will be greatly appreciated as well.
 
-3. Sites which are primarily rehosting content that is available from a legitimate source (TV shows, sports, news, etc.)
+Please remember that custom plugins can always be [sideloaded][plugin-sideloading], in case your request will be rejected or if plugins will be removed from Streamlink's `master` branch.
 
-4. Sites which require any sort of cable login or subscription
+**Plugins which fall under the following categories will not be implemented and any requests will be rejected.** Depending on the case, already existing plugins which don't meet these plugin criteria, may be kept.
 
-5. NSFW sites of a pornographic nature (cam sites, porn sites, etc.)
 
-6. Sites which don't provide any real live streaming content, eg. only VODs or VODs being rebroadcasted
+### Plugin rules
 
-7. Sites which don't provide any video streaming content, eg. radio stations
+1. **Any kind of streaming service that uses DRM protection**
 
-8. Sites where the maintainer has requested we not add their site to Streamlink
+    Streamlink won't implement or break any DRM schemes.
 
-9. Sites which are unmaintained, are in beta or are undergoing heavy amounts of development and may change rapidly
+2. **Sites which are hosting stolen content as their main source of content**
 
-10. Sites which have no way to determine viewership numbers
+    Plugins must only support websites with authentic content.
 
-11. Sites which are static cameras of a physical location
+3. **Sites which are primarily rehosting content**
+
+    Plugins must only implement the original/primary website where the content is hosted or shown.
+
+4. **Sites which require paid logins or subscriptions**
+
+    Plugin implementations and maintenance must be possible by everyone. Paid access prevents this.
+
+5. **NSFW sites of a pornographic nature**
+
+    This also includes borderline NSFW content, as it lowers the bar for follow-up plugin requests.
+
+6. **Sites which don't provide any real live-streaming content**
+
+    For example VOD-only content or VODs being re-broadcasted.
+
+7. **Sites which don't provide any video streaming content**
+
+    For example radio stations or streams where the primary focus is the audio content.
+
+8. **Sites where the maintainer has requested we don't add their site to Streamlink**
+
+    We respect legitimate requests by the owners of certain websites, depending on their size.
+
+9. **Sites which are unmaintained, are in beta or are undergoing heavy amounts of development and may change rapidly**
+
+    Stability of new plugin implementations must be guaranteed.
+
+10. **Sites which have no way to determine viewership numbers**
+
+    Plugins must not implement websites which are unused or which only have a handful of real/actual users.
+
+11. **Sites which are static cameras of a physical location**
+
+    We don't consider plugin implementations for this kind of content to be useful.
+
 
 ## Pull requests
 
 Good pull requests - patches, improvements, and new features - are a fantastic help. They should remain focused in scope and avoid containing unrelated commits.
 
-**Please ask first** before embarking on any significant pull request (e.g. implementing features, refactoring code, porting to a different language), otherwise you risk spending a lot of time working on something that the project's developers might not want to merge into the project.
+**Please ask first** before embarking on any significant pull request, for example:
 
-Please adhere to the coding conventions used throughout a project (indentation, white space, accurate comments, etc.) and any other requirements (such as test coverage).
+- implementing features
+- adding new plugins
+- refactoring code
+
+Otherwise, you risk spending a lot of time working on something that the project's developers might not want to merge into the project.
+
+Please adhere to the coding conventions used throughout a project (i.e. indentation, white space, accurate comments) and any other requirements, such as test coverage.
 
 Adhering to the following process is the best way to get your work included in the project:
 
 1. [Fork][howto-fork] the project, clone your fork, and configure the remotes:
    ```bash
-   # Clone your fork of the repo into the current directory
-   git clone git@github.com:<YOUR-USERNAME>/streamlink.git
-   # Navigate to the newly cloned directory
+   git clone git@github.com:YOUR-USERNAME/streamlink.git
    cd streamlink
-   # Assign the original repo to a remote called "upstream"
    git remote add upstream https://github.com/streamlink/streamlink.git
    ```
 
-2. If you cloned a while ago, get the latest changes from upstream
+2. If you cloned a while ago, get the latest changes from upstream:
    ```bash
    git checkout master
    git pull upstream master
@@ -83,22 +136,31 @@ Adhering to the following process is the best way to get your work included in t
 
 3. Create a new topic branch (off the main project branch) to contain your feature, change, or fix:
    ```bash
-   git checkout -b <TOPIC-BRANCH-NAME>
+   git checkout -b TOPIC-BRANCH-NAME
    ```
 
 4. Commit your changes in logical chunks. Please adhere to these [git commit message guidelines][howto-format-commits] or your code is unlikely be merged into the project. Use git's [interactive rebase][howto-rebase] feature to tidy up your commits before making them public.
 
-5. Locally merge (or rebase) the upstream branch into your topic branch:
+5. If your topic branch is based off an outdated commit on the master branch, then rebase first:
    ```bash
-   git pull [--rebase] upstream master
+   git checkout master
+   git pull upstream master
+   git checkout TOPIC-BRANCH-NAME
+   git rebase --interactive master
    ```
 
 6. Push your topic branch up to your fork:
    ```bash
-   git push origin <TOPIC-BRANCH-NAME>
+   git push origin TOPIC-BRANCH-NAME
    ```
 
 7. [Open a Pull Request][howto-open-pull-requests] with a clear title and description.
+
+8. After rebasing or making amending commits, force-push the branch to your fork:
+   ```bash
+   git rebase --interactive master
+   git push --force origin TOPIC-BRANCH-NAME
+   ```
 
 **IMPORTANT**: By submitting a patch, you agree to allow the project owners to license your work
 under the terms of the [BSD 2-clause license][license].
@@ -173,7 +235,6 @@ This contributing guide has been adapted from [HTML5 boilerplate's guide][ref-h5
 
 
   [issues]: https://github.com/streamlink/streamlink/issues
-  [known-issues]: https://github.com/streamlink/streamlink/blob/master/KNOWN_ISSUES.md
   [mastering-markdown]: https://guides.github.com/features/mastering-markdown
   [howto-fork]: https://help.github.com/articles/fork-a-repo
   [howto-rebase]: https://help.github.com/articles/interactive-rebase

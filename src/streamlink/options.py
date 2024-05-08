@@ -1,7 +1,19 @@
-from typing import Any, Callable, ClassVar, Dict, Iterable, Iterator, Literal, Mapping, Optional, Sequence, TypeVar, Union
-
-
-_T = TypeVar("_T")
+import argparse
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+)
 
 
 class Options:
@@ -103,6 +115,9 @@ class Options:
         return self.options.__iter__()
 
 
+_TChoices = TypeVar("_TChoices", bound=Iterable)
+
+
 class Argument:
     # noinspection PyShadowingBuiltins
     def __init__(
@@ -113,14 +128,14 @@ class Argument:
         nargs: Optional[Union[int, Literal["?", "*", "+"]]] = None,
         const: Any = None,
         default: Any = None,
-        type: Optional[Callable[[Any], _T]] = None,  # noqa: A002
-        choices: Optional[Iterable[_T]] = None,
+        type: Optional[Callable[[Any], Union[_TChoices, Any]]] = None,  # noqa: A002
+        choices: Optional[_TChoices] = None,
         required: bool = False,
         help: Optional[str] = None,  # noqa: A002
-        metavar: Optional[Union[str, Sequence[str]]] = None,
+        metavar: Optional[Union[str, List[str], Tuple[str, ...]]] = None,
         dest: Optional[str] = None,
         # additional `Argument()` keywords
-        requires: Optional[Union[str, Sequence[str]]] = None,
+        requires: Optional[Union[str, List[str], Tuple[str, ...]]] = None,
         prompt: Optional[str] = None,
         sensitive: bool = False,
         argument_name: Optional[str] = None,
@@ -159,15 +174,24 @@ class Argument:
         self.nargs = nargs
         self.const = const
         self.type = type
-        self.choices = choices
+        self.choices: Optional[Tuple[Any, ...]] = tuple(choices) if choices else None
         self.required = required
-        self.help = help
-        self.metavar = metavar
+        # argparse compares the object identity of argparse.SUPPRESS
+        self.help = argparse.SUPPRESS if help == argparse.SUPPRESS else help
+        self.metavar: Optional[Union[str, Tuple[str, ...]]] = (
+            tuple(metavar)
+            if metavar is not None and not isinstance(metavar, str)
+            else metavar
+        )
 
         self._default = default
         self._dest = self._normalize_dest(dest) if dest else None
 
-        self.requires = list(requires or []) if not requires or isinstance(requires, (list, tuple)) else [requires]
+        self.requires: Tuple[str, ...] = (
+            tuple(requires)
+            if requires is not None and not isinstance(requires, str)
+            else ((requires,) if requires is not None else ())
+        )
         self.prompt = prompt
         self.sensitive = sensitive
         self._argument_name = self._normalize_name(argument_name) if argument_name else None
@@ -219,6 +243,28 @@ class Argument:
             if getattr(self, attr) is not None
         }
 
+    def __hash__(self):
+        return hash((
+            self.name,
+            self.action,
+            self.nargs,
+            self.const,
+            self.type,
+            self.choices,
+            self.required,
+            self.help,
+            self.metavar,
+            self._default,
+            self._dest,
+            self.requires,
+            self.prompt,
+            self.sensitive,
+            self._argument_name,
+        ))
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and hash(self) == hash(other)
+
 
 class Arguments:
     """
@@ -234,6 +280,12 @@ class Arguments:
     def __iter__(self) -> Iterator[Argument]:
         # iterate in reverse order due to add() being called by multiple pluginargument decorators in reverse order
         return reversed(self.arguments.values())
+
+    def __hash__(self):
+        return hash(tuple(self.arguments.items()))
+
+    def __eq__(self, other):
+        return isinstance(other, self.__class__) and hash(self) == hash(other)
 
     def add(self, argument: Argument) -> None:
         self.arguments[argument.name] = argument
@@ -265,4 +317,8 @@ class Arguments:
                 yield r
 
 
-__all__ = ["Options", "Arguments", "Argument"]
+__all__ = [
+    "Argument",
+    "Arguments",
+    "Options",
+]

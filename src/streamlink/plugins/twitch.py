@@ -541,8 +541,8 @@ class TwitchClientIntegrity:
         headers: Mapping[str, str],
         device_id: str,
     ) -> Optional[Tuple[str, int]]:
+        from exceptiongroup import BaseExceptionGroup  # noqa: PLC0415, I001
         from streamlink.webbrowser.cdp import CDPClient, CDPClientSession, devtools  # noqa: PLC0415
-        from streamlink.webbrowser.exceptions import WebbrowserError  # noqa: PLC0415
 
         url = f"https://www.twitch.tv/{channel}"
         js_get_integrity_token = cls.JS_INTEGRITY_TOKEN \
@@ -550,6 +550,8 @@ class TwitchClientIntegrity:
             .replace("HEADERS", json_dumps(headers)) \
             .replace("DEVICE_ID", device_id)
         eval_timeout = session.get_option("webbrowser-timeout")
+        # noinspection PyUnusedLocal
+        client_integrity: Optional[str] = None
 
         async def on_main(client_session: CDPClientSession, request: devtools.fetch.RequestPaused):
             async with client_session.alter_request(request) as cm:
@@ -564,15 +566,17 @@ class TwitchClientIntegrity:
                     return await client_session.evaluate(js_get_integrity_token, timeout=eval_timeout)
 
         try:
-            client_integrity: Optional[str] = CDPClient.launch(
+            client_integrity = CDPClient.launch(
                 session,
                 acquire_client_integrity_token,
                 # headless mode gets detected by Twitch, so we have to disable it regardless the user config
                 headless=False,
             )
-        except WebbrowserError as err:
-            log.error(f"{type(err).__name__}: {err}")
-            return None
+        except BaseExceptionGroup:
+            log.exception("Failed acquiring client integrity token")
+        except Exception as err:
+            log.error(err)
+
         if not client_integrity:
             return None
 
@@ -637,9 +641,9 @@ class TwitchClientIntegrity:
 @pluginargument(
     "low-latency",
     action="store_true",
-    help=f"""
+    help="""
         Enables low latency streaming by prefetching HLS segments.
-        Sets --hls-segment-stream-data to true and --hls-live-edge to `{LOW_LATENCY_MAX_LIVE_EDGE}`, if it is higher.
+        Sets --hls-segment-stream-data to true and --hls-live-edge to 2, if it is higher.
         Reducing --hls-live-edge to `1` will result in the lowest latency possible, but will most likely cause buffering.
 
         In order to achieve true low latency streaming during playback, the player's caching/buffering settings will

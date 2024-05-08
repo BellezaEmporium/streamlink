@@ -19,7 +19,6 @@ from typing import (
     NamedTuple,
     Optional,
     Pattern,
-    Sequence,
     Tuple,
     Type,
     TypeVar,
@@ -42,7 +41,9 @@ if TYPE_CHECKING:  # pragma: no cover
 
 #: See the :func:`~.pluginargument` decorator
 _PLUGINARGUMENT_TYPE_REGISTRY: Dict[str, Callable[[Any], Any]] = {
-    "boolean": streamlink.utils.args.boolean,
+    "int": int,
+    "float": float,
+    "bool": streamlink.utils.args.boolean,
     "comma_list": streamlink.utils.args.comma_list,
     "comma_list_filter": streamlink.utils.args.comma_list_filter,
     "filesize": streamlink.utils.args.filesize,
@@ -51,9 +52,6 @@ _PLUGINARGUMENT_TYPE_REGISTRY: Dict[str, Callable[[Any], Any]] = {
     "hours_minutes_seconds": streamlink.utils.times.hours_minutes_seconds,
     "hours_minutes_seconds_float": streamlink.utils.times.hours_minutes_seconds_float,
 }
-
-
-_T = TypeVar("_T")
 
 
 log = logging.getLogger(__name__)
@@ -669,6 +667,9 @@ def pluginmatcher(
     return decorator
 
 
+_TChoices = TypeVar("_TChoices", bound=Iterable)
+
+
 # noinspection GrazieInspection,PyShadowingBuiltins
 def pluginargument(
     name: str,
@@ -676,15 +677,15 @@ def pluginargument(
     nargs: Optional[Union[int, Literal["?", "*", "+"]]] = None,
     const: Any = None,
     default: Any = None,
-    type: Optional[Union[str, Callable[[Any], _T]]] = None,  # noqa: A002
-    type_args: Optional[Sequence[Any]] = None,
+    type: Optional[Union[str, Callable[[Any], Union[_TChoices, Any]]]] = None,  # noqa: A002
+    type_args: Optional[Union[list, tuple]] = None,
     type_kwargs: Optional[Dict[str, Any]] = None,
-    choices: Optional[Iterable[_T]] = None,
+    choices: Optional[_TChoices] = None,
     required: bool = False,
     help: Optional[str] = None,  # noqa: A002
-    metavar: Optional[Union[str, Sequence[str]]] = None,
+    metavar: Optional[Union[str, List[str], Tuple[str, ...]]] = None,
     dest: Optional[str] = None,
-    requires: Optional[Union[str, Sequence[str]]] = None,
+    requires: Optional[Union[str, List[str], Tuple[str, ...]]] = None,
     prompt: Optional[str] = None,
     sensitive: bool = False,
     argument_name: Optional[str] = None,
@@ -724,7 +725,7 @@ def pluginargument(
     assuming the plugin's module name is ``myplugin``.
     """
 
-    _type: Optional[Callable[[Any], _T]]
+    _type: Optional[Callable[[Any], _TChoices]]
     if not isinstance(type, str):
         _type = type
     else:

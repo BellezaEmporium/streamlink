@@ -2,6 +2,9 @@
 $description TV and live video game broadcasts, artist performances and personal daily-life video blogs & shows.
 $url play.afreecatv.com
 $type live
+$metadata id
+$metadata author
+$metadata title
 """
 
 import logging
@@ -49,27 +52,33 @@ class AfreecaHLSStream(HLSStream):
     action="store_true",
     help="Purge cached AfreecaTV credentials to initiate a new session and reauthenticate.",
 )
+@pluginargument(
+    "stream-password",
+    metavar="STREAM_PASSWORD",
+    help="The password for the stream.",
+)
 class AfreecaTV(Plugin):
-    _re_bno = re.compile(r"var nBroadNo = (?P<bno>\d+);")
+    _re_bno = re.compile(r"window\.nBroadNo\s*=\s*(?P<bno>\d+);")
 
-    CHANNEL_API_URL = "http://live.afreecatv.com/afreeca/player_live_api.php"
+    CHANNEL_API_URL = "https://live.afreecatv.com/afreeca/player_live_api.php"
     CHANNEL_RESULT_OK = 1
-    QUALITYS = ["original", "hd", "sd"]
-    QUALITY_WEIGHTS = {
-        "original": 1080,
-        "hd": 720,
-        "sd": 480,
-    }
+    CHANNEL_LOGIN_REQUIRED = -6
 
     _schema_channel = validate.Schema(
         {
             "CHANNEL": {
                 "RESULT": validate.transform(int),
-                validate.optional("BPWD"): str,
-                validate.optional("BNO"): str,
-                validate.optional("RMD"): str,
-                validate.optional("AID"): str,
-                validate.optional("CDN"): str,
+                validate.optional("BPWD"): validate.any(str, None),
+                validate.optional("BNO"): validate.any(str, None),
+                validate.optional("RMD"): validate.any(str, None),
+                validate.optional("AID"): validate.any(str, None),
+                validate.optional("CDN"): validate.any(str, None),
+                validate.optional("BJNICK"): validate.any(str, None),
+                validate.optional("TITLE"): validate.any(str, None),
+                validate.optional("VIEWPRESET"): [{
+                    "label": str,
+                    "name": str,
+                }],
             },
         },
         validate.get("CHANNEL"),
@@ -77,7 +86,7 @@ class AfreecaTV(Plugin):
     _schema_stream = validate.Schema(
         {
             validate.optional("view_url"): validate.url(
-                scheme=validate.any("rtmp", "http"),
+                scheme=validate.any("rtmp", "https"),
             ),
             "stream_status": str,
         },
@@ -93,14 +102,6 @@ class AfreecaTV(Plugin):
             and self.session.http.cookies.get("RDB")
         )
 
-    @classmethod
-    def stream_weight(cls, key):
-        weight = cls.QUALITY_WEIGHTS.get(key)
-        if weight:
-            return weight, "afreeca"
-
-        return Plugin.stream_weight(key)
-
     def _get_channel_info(self, broadcast, username):
         data = {
             "bid": username,
@@ -115,14 +116,14 @@ class AfreecaTV(Plugin):
         res = self.session.http.post(self.CHANNEL_API_URL, data=data)
         return self.session.http.json(res, schema=self._schema_channel)
 
-    def _get_hls_key(self, broadcast, username, quality):
+    def _get_hls_key(self, broadcast, username, quality, stream_password):
         data = {
             "bid": username,
             "bno": broadcast,
             "from_api": "0",
             "mode": "landing",
             "player_type": "html5",
-            "pwd": "",
+            "pwd": stream_password or "",
             "quality": quality,
             "stream_type": "common",
             "type": "aid",
@@ -138,17 +139,17 @@ class AfreecaTV(Plugin):
         res = self.session.http.get(f"{rmd}/broad_stream_assign.html", params=params)
         return self.session.http.json(res, schema=self._schema_stream)
 
-    def _get_hls_stream(self, broadcast, username, quality, rmd):
-        keyjson = self._get_hls_key(broadcast, username, quality)
+    def _get_hls_stream(self, broadcast, username, quality, rmd, stream_password):
+        keyjson = self._get_hls_key(broadcast, username, quality, stream_password)
 
-        if keyjson["RESULT"] != self.CHANNEL_RESULT_OK:
+        if keyjson.get("RESULT") != self.CHANNEL_RESULT_OK:
             return
-        key = keyjson["AID"]
+        key = keyjson.get("AID")
 
         info = self._get_stream_info(broadcast, quality, rmd)
 
         if "view_url" in info:
-            return AfreecaHLSStream(self.session, info["view_url"], params={"aid": key})
+            return AfreecaHLSStream(self.session, info.get("view_url"), params={"aid": key})
 
     def _login(self, username, password):
         data = {
@@ -164,7 +165,7 @@ class AfreecaTV(Plugin):
         res = self.session.http.post("https://login.afreecatv.com/app/LoginAction.php", data=data)
         data = self.session.http.json(res)
         log.trace(f"{data!r}")
-        if data["RESULT"] != self.CHANNEL_RESULT_OK:
+        if data.get("RESULT") != self.CHANNEL_RESULT_OK:
             return False
         self.save_cookies()
         return True
@@ -172,8 +173,9 @@ class AfreecaTV(Plugin):
     def _get_streams(self):
         login_username = self.get_option("username")
         login_password = self.get_option("password")
+        stream_password = self.get_option("stream-password")
 
-        self.session.http.headers.update({"Referer": self.url, "Origin": "http://play.afreecatv.com"})
+        self.session.http.headers.update({"Referer": self.url, "Origin": "https://play.afreecatv.com"})
 
         if self.options.get("purge_credentials"):
             self.clear_cookies()
@@ -190,8 +192,8 @@ class AfreecaTV(Plugin):
                 log.error("Failed to login")
 
         m = self.match.groupdict()
-        username = m["username"]
-        bno = m["bno"]
+        username = m.get("username")
+        bno = m.get("bno")
         if bno is None:
             res = self.session.http.get(self.url)
             m = self._re_bno.search(res.text)
@@ -202,23 +204,32 @@ class AfreecaTV(Plugin):
 
         channel = self._get_channel_info(bno, username)
         log.trace(f"{channel!r}")
-        if channel.get("BPWD") == "Y":
-            log.error("Stream is Password-Protected")
-            return
-        elif channel.get("RESULT") == -6:
+        if channel.get("RESULT") == self.CHANNEL_LOGIN_REQUIRED:
             log.error("Login required")
             return
-        elif channel.get("RESULT") != self.CHANNEL_RESULT_OK:
+        if channel.get("RESULT") != self.CHANNEL_RESULT_OK:
             return
 
-        (broadcast, rmd) = (channel["BNO"], channel["RMD"])
+        (broadcast, rmd) = (channel.get("BNO"), channel.get("RMD"))
         if not (broadcast and rmd):
             return
 
-        for qkey in self.QUALITYS:
-            hls_stream = self._get_hls_stream(broadcast, username, qkey, rmd)
-            if hls_stream:
-                yield qkey, hls_stream
+        self.id = channel.get("BNO")
+        self.author = channel.get("BJNICK")
+        self.title = channel.get("TITLE")
+
+        streams = {}
+        for item in channel.get("VIEWPRESET"):
+            if item["name"] == "auto":
+                continue
+            if hls_stream := self._get_hls_stream(broadcast, username, item["name"], rmd, stream_password):
+                streams[item["label"]] = hls_stream
+
+        if not streams and channel.get("BPWD") == "Y":
+            log.error("Stream is password protected")
+            return
+
+        return streams
 
 
 __plugin__ = AfreecaTV

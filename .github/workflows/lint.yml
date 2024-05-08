@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install Python dependencies
@@ -35,7 +35,7 @@ jobs:
           -r dev-requirements.txt
       - name: ruff
         run: >
-          python -m ruff .
+          python -m ruff check .
 
   typing:
     name: Typing
@@ -43,7 +43,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install Python dependencies

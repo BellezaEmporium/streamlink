@@ -8,6 +8,7 @@ from subprocess import DEVNULL
 from typing import AsyncContextManager, AsyncGenerator, Generator, List, Optional, Union
 
 import trio
+from exceptiongroup import BaseExceptionGroup
 
 from streamlink.utils.path import resolve_executable
 from streamlink.webbrowser.exceptions import WebbrowserError
@@ -59,7 +60,7 @@ class Webbrowser:
 
         launcher = _WebbrowserLauncher(executable, arguments, timeout)
 
-        # noinspection PyTypeChecker
+        # noinspection PyArgumentList
         return launcher.launch()
 
     @staticmethod
@@ -79,37 +80,41 @@ class _WebbrowserLauncher:
 
     @asynccontextmanager
     async def launch(self) -> AsyncGenerator[trio.Nursery, None]:
-        async with trio.open_nursery() as nursery:
-            log.info(f"Launching web browser: {self.executable}")
-            # the process is run in a separate task
-            run_process = partial(
-                trio.run_process,
-                [self.executable, *self.arguments],
-                check=False,
-                stdout=DEVNULL,
-                stderr=DEVNULL,
-            )
-            # trio ensures that the process gets terminated when the task group gets cancelled
-            process: trio.Process = await nursery.start(run_process)
-            # the process watcher task cancels the entire task group when the user terminates/kills the process
-            nursery.start_soon(self._task_process_watcher, process, nursery)
-            try:
-                # the application logic is run here
-                with trio.move_on_after(self.timeout) as cancel_scope:
-                    yield nursery
-            except BaseException:
-                # handle KeyboardInterrupt and SystemExit
+        try:
+            async with trio.open_nursery() as nursery:
+                log.info(f"Launching web browser: {self.executable}")
+                # the process is run in a separate task
+                run_process = partial(
+                    trio.run_process,
+                    [self.executable, *self.arguments],
+                    check=False,
+                    stdout=DEVNULL,
+                    stderr=DEVNULL,
+                )
+                # trio ensures that the process gets terminated when the task group gets cancelled
+                process: trio.Process = await nursery.start(run_process)
+                # the process watcher task cancels the entire task group when the user terminates/kills the process
+                nursery.start_soon(self._task_process_watcher, process, nursery)
+                try:
+                    # the application logic is run here
+                    with trio.move_on_after(self.timeout) as cancel_scope:
+                        yield nursery
+                    # check if the application logic has timed out
+                    if cancel_scope.cancelled_caught:
+                        log.warning("Web browser task group has timed out")
+                finally:
+                    # check if the task group hasn't been cancelled yet in the process watcher task
+                    if not self._process_ended_early:
+                        log.debug("Waiting for web browser process to terminate")
+                    # once the application logic is done, cancel the entire task group and terminate/kill the process
+                    nursery.cancel_scope.cancel()
+        except BaseExceptionGroup as exc_grp:  # TODO: py310 support end: use except*
+            exc: Union[BaseException, BaseExceptionGroup, None] = exc_grp.subgroup((KeyboardInterrupt, SystemExit))
+            if not exc:  # not a KeyboardInterrupt or SystemExit
                 raise
-            else:
-                # check if the application logic has timed out
-                if cancel_scope.cancelled_caught:
-                    log.warning("Web browser task group has timed out")
-            finally:
-                # check if the task group hasn't been cancelled yet in the process watcher task
-                if not self._process_ended_early:
-                    log.debug("Waiting for web browser process to terminate")
-                # once the application logic is done, cancel the entire task group and terminate/kill the process
-                nursery.cancel_scope.cancel()
+            while isinstance(exc, BaseExceptionGroup):  # get the first actual exception in the potentially nested groups
+                exc = exc.exceptions[0]
+            raise exc from exc.__context__
 
     async def _task_process_watcher(self, process: trio.Process, nursery: trio.Nursery) -> None:
         """Task for cancelling the launch task group if the user closes the browser or if it exits early on its own"""

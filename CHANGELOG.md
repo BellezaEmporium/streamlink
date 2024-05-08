@@ -1,5 +1,117 @@
 # Changelog
 
+## streamlink 6.7.3 (2024-04-14)
+
+Patch release:
+
+- Fixed: file output paths being able to exceed max file/directory name length ([#5921](https://github.com/streamlink/streamlink/pull/5921), [#5925](https://github.com/streamlink/streamlink/pull/5925))
+- Fixed: propagation of `KeyboardInterrupt`/`SystemExit` in `streamlink.webbrowser` ([#5930](https://github.com/streamlink/streamlink/pull/5930))
+- Fixed: compatibility with `exceptiongroup<=1.1.1` ([#5930](https://github.com/streamlink/streamlink/pull/5930))
+- Fixed: `plugin.api.validate.parse_qsd` input type validation ([#5932](https://github.com/streamlink/streamlink/pull/5932))
+- Updated plugins:
+  - mangomolo: fixed missing referer header and updated URL matcher ([#5923](https://github.com/streamlink/streamlink/pull/5923), [#5926](https://github.com/streamlink/streamlink/pull/5926))
+  - pluto: rewritten plugin ([#5910](https://github.com/streamlink/streamlink/pull/5910))
+  - showroom: fixed geo-block check preventing stream access ([#5911](https://github.com/streamlink/streamlink/pull/5911))
+  - vkplay: updated URL matcher ([#5908](https://github.com/streamlink/streamlink/pull/5908))
+- Tests: fixed test failure when running tests from the `bdist` build directory ([#5933](https://github.com/streamlink/streamlink/pull/5933))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.7.2...6.7.3)
+
+
+## streamlink 6.7.2 (2024-03-23)
+
+Patch release:
+
+- Build: reverted `trio` version requirement bump ([#5902](https://github.com/streamlink/streamlink/pull/5902))
+- Build: fixed incorrect `pytest` version requirement ([#5901](https://github.com/streamlink/streamlink/pull/5901))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.7.1...6.7.2)
+
+
+## streamlink 6.7.1 (2024-03-19)
+
+Patch release:
+
+- Fixed: CLI download progress missing the last data chunk ([#5887](https://github.com/streamlink/streamlink/pull/5887))
+- Fixed: compatibility with `trio>=0.25` ([#5895](https://github.com/streamlink/streamlink/pull/5895))
+- Updated plugins:
+  - tv3cat: fixed plugin and added VODs ([#5890](https://github.com/streamlink/streamlink/pull/5890))
+  - vimeo: fixed event streams and embedded player URLs ([#5892](https://github.com/streamlink/streamlink/pull/5892), [#5899](https://github.com/streamlink/streamlink/pull/5899))
+- Build: bumped `trio` dependency version requirement to `>=0.25,<1` ([#5895](https://github.com/streamlink/streamlink/pull/5895))
+- Build: added `exceptiongroup` dependency ([#5895](https://github.com/streamlink/streamlink/pull/5895))
+- Tests: fixed root logger level not being reset ([#5888](https://github.com/streamlink/streamlink/pull/5888), [#5897](https://github.com/streamlink/streamlink/pull/5897))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.7.0...6.7.1)
+
+
+## streamlink 6.7.0 (2024-03-09)
+
+Release highlights:
+
+- Added: repeatable `--plugin-dir` CLI argument ([#5866](https://github.com/streamlink/streamlink/pull/5866))
+- Deprecated: `--plugin-dirs` CLI argument with comma separated paths ([#5866](https://github.com/streamlink/streamlink/pull/5866))
+- Fixed: independent encryption status of HLS initialization sections ([#5861](https://github.com/streamlink/streamlink/pull/5861))
+- Fixed: objects of default session options being shared between sessions ([#5875](https://github.com/streamlink/streamlink/pull/5875))
+- Updated plugins:
+  - bloomberg: fixed data regex ([#5869](https://github.com/streamlink/streamlink/pull/5869))
+  - ltv_lsm_lv: fixed player ID retrieval, removed custom HLS implementation ([#5858](https://github.com/streamlink/streamlink/pull/5858))
+  - mangomolo: new plugin ([#5852](https://github.com/streamlink/streamlink/pull/5852))
+  - ustvnow: updated matcher ([#5881](https://github.com/streamlink/streamlink/pull/5881))
+  - vimeo: fixed optional DASH streams of live events ([#5854](https://github.com/streamlink/streamlink/pull/5854))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.6.2...6.7.0)
+
+
+## streamlink 6.6.2 (2024-02-20)
+
+Patch release:
+
+- Fixed: missing plugin override log message in non-editable installs ([#5844](https://github.com/streamlink/streamlink/pull/5844))
+- Fixed: incorrect `setuptools` min. version in build requirements ([#5842](https://github.com/streamlink/streamlink/pull/5842))
+- Updated plugins:
+  - afreeca: fixed broadcast number regex ([#5847](https://github.com/streamlink/streamlink/pull/5847))
+  - afreeca: added support for stream metadata ([#5849](https://github.com/streamlink/streamlink/pull/5849))
+  - hiplayer: removed media.gov.kw matcher ([#5848](https://github.com/streamlink/streamlink/pull/5848))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.6.1...6.6.2)
+
+
+## streamlink 6.6.1 (2024-02-17)
+
+Patch release:
+
+- Fixed: plugin arguments in `--help` output ([#5838](https://github.com/streamlink/streamlink/pull/5838))
+- Docs: removed empty plugin sections in docs and man page ([#5838](https://github.com/streamlink/streamlink/pull/5838))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.6.0...6.6.1)
+
+
+## streamlink 6.6.0 (2024-02-16)
+
+Release highlights:
+
+- Implemented: lazy plugins loading ([#5793](https://github.com/streamlink/streamlink/pull/5793), [#5822](https://github.com/streamlink/streamlink/pull/5822))  
+  Streamlink's built-in plugins will now be loaded on demand when resolving input URLs.  
+  This improves initial loading times and reduces total memory consumption.
+- Refactored: Streamlink session module (and related)
+  - Moved: `streamlink.session` into a sub-package ([#5807](https://github.com/streamlink/streamlink/pull/5807))
+  - Moved: `streamlink.plugin.api.http_session` to `streamlink.session.http` ([#5807](https://github.com/streamlink/streamlink/pull/5807))
+  - Refactored: `Streamlink` class internals ([#5807](https://github.com/streamlink/streamlink/pull/5807), [#5814](https://github.com/streamlink/streamlink/pull/5814))
+  - Deprecated: [`Streamlink.{get,load}_plugins()` methods](https://streamlink.github.io/deprecations.html#streamlink-get-load-plugins) ([#5818](https://github.com/streamlink/streamlink/pull/5818))
+  - Deprecated: [direct imports of `HTTPSession` and imports from `streamlink.plugin.api.http_session`](https://streamlink.github.io/deprecations.html#httpsession-and-httpadapters) ([#5818](https://github.com/streamlink/streamlink/pull/5818))
+- Refactored: `streamlink.utils.args` module ([#5778](https://github.com/streamlink/streamlink/pull/5778), [#5781](https://github.com/streamlink/streamlink/pull/5781), [#5815](https://github.com/streamlink/streamlink/pull/5815))
+- Updated plugins:
+  - aloula: fixed missing HTTP headers ([#5792](https://github.com/streamlink/streamlink/pull/5792))
+  - foxtr: removed plugin ([#5827](https://github.com/streamlink/streamlink/pull/5827))
+  - huya: fixed stream URLs ([#5785](https://github.com/streamlink/streamlink/pull/5785))
+  - nowtvtr: new plugin ([#5827](https://github.com/streamlink/streamlink/pull/5827))
+  - qq: removed plugin ([#5806](https://github.com/streamlink/streamlink/pull/5806))
+  - rtbf: removed plugin ([#5801](https://github.com/streamlink/streamlink/pull/5801))
+- Tests: improved overall test execution time ([#5799](https://github.com/streamlink/streamlink/pull/5799), [#5805](https://github.com/streamlink/streamlink/pull/5805))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.5.1...6.6.0)
+
+
 ## streamlink 6.5.1 (2024-01-16)
 
 Patch release:

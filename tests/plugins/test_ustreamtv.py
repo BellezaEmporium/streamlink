@@ -53,17 +53,14 @@ class TestPluginCanHandleUrlUStreamTV(PluginCanHandleUrl):
 
 
 class TestPluginUStreamTV:
-    def test_arguments(self):
+    def test_arguments(self, session: Streamlink):
         from streamlink_cli.main import setup_plugin_args  # noqa: PLC0415
 
-        session = Streamlink()
         parser = MagicMock()
         plugins = parser.add_argument_group("Plugin Options")
         group = parser.add_argument_group("UStreamTV", parent=plugins)
 
-        session.plugins = {
-            "ustreamtv": UStreamTV,
-        }
+        session.plugins["ustreamtv"] = UStreamTV
 
         setup_plugin_args(session, parser)
 

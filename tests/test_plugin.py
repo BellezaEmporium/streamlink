@@ -23,7 +23,13 @@ from streamlink.plugin import (
 )
 
 # noinspection PyProtectedMember
-from streamlink.plugin.plugin import _COOKIE_KEYS, _PLUGINARGUMENT_TYPE_REGISTRY, Matcher, parse_params, stream_weight
+from streamlink.plugin.plugin import (
+    _COOKIE_KEYS,  # noqa: PLC2701
+    _PLUGINARGUMENT_TYPE_REGISTRY,  # noqa: PLC2701
+    Matcher,
+    parse_params,
+    stream_weight,
+)
 from streamlink.session import Streamlink
 
 
@@ -225,11 +231,25 @@ class TestPluginArguments:
 
     @pytest.mark.parametrize(("options", "args", "expected", "raises"), [
         pytest.param(
-            {"type": "boolean"},
+            {"type": "int"},
+            ["--myplugin-foo", "123"],
+            123,
+            nullcontext(),
+            id="int",
+        ),
+        pytest.param(
+            {"type": "float"},
+            ["--myplugin-foo", "123.456"],
+            123.456,
+            nullcontext(),
+            id="float",
+        ),
+        pytest.param(
+            {"type": "bool"},
             ["--myplugin-foo", "yes"],
             True,
             nullcontext(),
-            id="boolean",
+            id="bool",
         ),
         pytest.param(
             {"type": "keyvalue"},

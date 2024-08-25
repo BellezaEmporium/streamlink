@@ -23,7 +23,7 @@ class DesdePyLabs(Plugin):
             validate.transform(self._re_hls.search),
             validate.get("hls_url")
         ))
-        # Puede funcionar...
+        # Venus Media workaround.
         if result:
             if channel == "venusmedia":
                 hls_url = result.replace("_int_alta", "")

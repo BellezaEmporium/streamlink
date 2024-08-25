@@ -64,6 +64,12 @@ def parse_arguments() -> argparse.Namespace:
         metavar=("STRING", "REPLACEMENT"),
         help="Replace specific URL parts, e.g. channel names or IDs. Can be set multiple times",
     )
+    parser.add_argument(
+        "-m",
+        "--metadata",
+        action="store_true",
+        help="Show plugin metadata for each input URL",
+    )
 
     return parser.parse_args()
 
@@ -95,6 +101,7 @@ class PluginUrlTester:
         self.pluginname: str = args.plugin.lower()
 
         self.dry_run: bool = args.dry_run
+        self.log_metadata: bool = args.metadata
 
         self.loglevel: str = str(args.loglevel).upper()
         self.logcolor: str = args.color
@@ -127,7 +134,7 @@ class PluginUrlTester:
         url: str = item[1] if isinstance(item, tuple) else item
         if not any(re.search(ignore, url) for ignore in self.ignorelist):
             for string, replacement in self.replacelist:
-                url = url.replace(string, replacement)
+                url = re.sub(fr"\b{re.escape(string)}\b", replacement, url)
             self.urls.add(url)
 
     def iter_urls(self) -> Iterator[TUrlOrNamedUrl]:
@@ -155,7 +162,7 @@ class PluginUrlTester:
     def run(self) -> int:
         code = 0
         for url in sorted(self.urls):
-            self.logger.info(f"Finding streams for URL: {url}")
+            self.logger.info(url)
 
             session = Streamlink(plugins_builtin=True)
             # noinspection PyBroadException
@@ -183,8 +190,12 @@ class PluginUrlTester:
             if not streams:
                 self.logger.error("No streams found")
                 code = 1
-            else:
-                self.logger.info(f"Found streams: {', '.join(streams.keys())}")
+                continue
+
+            self.logger.info(f" {', '.join(streams.keys())}")
+
+            if self.log_metadata:
+                self.logger.info(f"  {plugininst.get_metadata()!r}")
 
         return code
 

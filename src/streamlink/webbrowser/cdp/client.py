@@ -86,9 +86,10 @@ class CDPClient:
     ``streamlink.webbrowser.cdp.devtools`` package, but be aware that only a subset of the available domains is supported.
     """
 
-    def __init__(self, cdp_connection: CDPConnection, nursery: trio.Nursery):
+    def __init__(self, cdp_connection: CDPConnection, nursery: trio.Nursery, headless: bool):
         self.cdp_connection = cdp_connection
         self.nursery = nursery
+        self.headless = headless
 
     @classmethod
     def launch(
@@ -178,25 +179,30 @@ class CDPClient:
         cdp_host: Optional[str] = None,
         cdp_port: Optional[int] = None,
         cdp_timeout: Optional[float] = None,
-        headless: bool = True,
+        headless: bool = False,
     ) -> AsyncGenerator[Self, None]:
-        webbrowser = ChromiumWebbrowser(executable=executable, host=cdp_host, port=cdp_port, headless=headless)
+        webbrowser = ChromiumWebbrowser(executable=executable, host=cdp_host, port=cdp_port)
         nursery: trio.Nursery
-        async with webbrowser.launch(timeout=timeout) as nursery:
+        async with webbrowser.launch(headless=headless, timeout=timeout) as nursery:
             websocket_url = webbrowser.get_websocket_url(session)
             cdp_connection: CDPConnection
             async with CDPConnection.create(websocket_url, timeout=cdp_timeout) as cdp_connection:
-                yield cls(cdp_connection, nursery)
+                yield cls(cdp_connection, nursery, headless)
 
     @asynccontextmanager
-    async def session(self, fail_unhandled_requests: bool = False) -> AsyncGenerator["CDPClientSession", None]:
+    async def session(
+        self,
+        fail_unhandled_requests: bool = False,
+        max_buffer_size: Optional[int] = None,
+    ) -> AsyncGenerator["CDPClientSession", None]:
         """
         Create a new CDP session on an empty target (browser tab).
 
         :param fail_unhandled_requests: Whether network requests which are not matched by any request handlers should fail.
+        :param max_buffer_size: Optional size of the send/receive memory channel for paused HTTP requests/responses.
         """
         cdp_session = await self.cdp_connection.new_target()
-        yield CDPClientSession(self, cdp_session, fail_unhandled_requests)
+        yield CDPClientSession(self, cdp_session, fail_unhandled_requests, max_buffer_size)
 
 
 class CDPClientSession:
@@ -212,12 +218,14 @@ class CDPClientSession:
         cdp_client: CDPClient,
         cdp_session: CDPSession,
         fail_unhandled_requests: bool = False,
+        max_buffer_size: Optional[int] = None,
     ):
         self.cdp_client = cdp_client
         self.cdp_session = cdp_session
         self._fail_unhandled = fail_unhandled_requests
         self._request_handlers: List[RequestPausedHandler] = []
         self._requests_handled: Set[str] = set()
+        self._max_buffer_size = max_buffer_size
 
     def add_request_handler(
         self,
@@ -267,6 +275,9 @@ class CDPClientSession:
 
         async with trio.open_nursery() as nursery:
             nursery.start_soon(self._on_target_detached_from_target)
+
+            if self.cdp_client.headless:
+                await self._update_user_agent()
 
             if request_patterns:
                 nursery.start_soon(self._on_fetch_request_paused)
@@ -405,12 +416,14 @@ class CDPClientSession:
         ]
 
     async def _on_target_detached_from_target(self) -> None:
+        detached_from_target: target.DetachedFromTarget
         async for detached_from_target in self.cdp_client.cdp_connection.listen(target.DetachedFromTarget):
             if detached_from_target.session_id == self.cdp_session.session_id:
                 raise CDPError("Target has been detached")
 
     async def _on_fetch_request_paused(self) -> None:
-        async for request in self.cdp_session.listen(fetch.RequestPaused):
+        request: fetch.RequestPaused
+        async for request in self.cdp_session.listen(fetch.RequestPaused, max_buffer_size=self._max_buffer_size):
             for handler in self._request_handlers:
                 if not handler.matches(request):
                     continue
@@ -422,3 +435,10 @@ class CDPClientSession:
                     await self.fail_request(request)
                 else:
                     await self.continue_request(request)
+
+    async def _update_user_agent(self) -> None:
+        user_agent: str = await self.evaluate("navigator.userAgent", await_promise=False)
+        if not user_agent:  # pragma: no cover
+            raise CDPError("Could not read navigator.userAgent value")
+        user_agent = re.sub("Headless", "", user_agent, flags=re.IGNORECASE)
+        await self.cdp_session.send(network.set_user_agent_override(user_agent=user_agent))

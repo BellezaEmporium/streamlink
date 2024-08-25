@@ -2,6 +2,7 @@
 $description Global live-streaming and video hosting social platform owned by Amazon.
 $url twitch.tv
 $type live, vod
+$webbrowser Required for getting a new :ref:`client-integrity token <cli/plugins/twitch:Client-integrity token>`.
 $metadata id
 $metadata author
 $metadata category
@@ -13,16 +14,17 @@ $notes Acquires a :ref:`client-integrity token <cli/plugins/twitch:Client-integr
 """
 
 import argparse
-import base64
 import logging
+import math
 import re
 import sys
+from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timedelta
 from json import dumps as json_dumps
 from random import random
-from typing import ClassVar, Mapping, Optional, Tuple, Type
+from typing import ClassVar, Deque, List, Mapping, Optional, Tuple, Type
 from urllib.parse import urlparse
 
 from requests.exceptions import HTTPError
@@ -62,14 +64,21 @@ class TwitchHLSSegment(HLSSegment):
 
 
 class TwitchM3U8(M3U8[TwitchHLSSegment, HLSPlaylist]):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.dateranges_ads = []
+        self.dateranges_ads: List[DateRange] = []
 
 
 class TwitchM3U8Parser(M3U8Parser[TwitchM3U8, TwitchHLSSegment, HLSPlaylist]):
     __m3u8__: ClassVar[Type[TwitchM3U8]] = TwitchM3U8
     __segment__: ClassVar[Type[TwitchHLSSegment]] = TwitchHLSSegment
+
+    @parse_tag("EXT-X-TWITCH-LIVE-SEQUENCE")
+    def parse_ext_x_twitch_live_sequence(self, value):
+        # Unset discontinuity state if the previous segment was not an ad,
+        # as the following segment won't be an ad
+        if self.m3u8.segments and not self.m3u8.segments[-1].ad:
+            self._discontinuity = False
 
     @parse_tag("EXT-X-TWITCH-PREFETCH")
     def parse_tag_ext_x_twitch_prefetch(self, value):
@@ -77,20 +86,32 @@ class TwitchM3U8Parser(M3U8Parser[TwitchM3U8, TwitchHLSSegment, HLSPlaylist]):
         if not segments:  # pragma: no cover
             return
         last = segments[-1]
+
         # Use the average duration of all regular segments for the duration of prefetch segments.
         # This is better than using the duration of the last segment when regular segment durations vary a lot.
         # In low latency mode, the playlist reload time is the duration of the last segment.
         duration = last.duration if last.prefetch else sum(segment.duration for segment in segments) / float(len(segments))
+
         # Use the last duration for extrapolating the start time of the prefetch segment, which is needed for checking
         # whether it is an ad segment and matches the parsed date ranges or not
         date = last.date + timedelta(seconds=last.duration)
+
         # Always treat prefetch segments after a discontinuity as ad segments
+        # (discontinuity tag inserted after last regular segment)
+        # Don't reset discontinuity state: the date extrapolation might be inaccurate,
+        # so all following prefetch segments should be considered an ad after a discontinuity
         ad = self._discontinuity or self._is_segment_ad(date)
+
+        # Since we don't reset the discontinuity state in prefetch segments for the purpose of ad detection,
+        # set the prefetch segment's discontinuity attribute based on ad transitions
+        discontinuity = ad != last.ad
+
         segment = dataclass_replace(
             last,
             uri=self.uri(value),
             duration=duration,
             title=None,
+            discontinuity=discontinuity,
             date=date,
             ad=ad,
             prefetch=True,
@@ -107,6 +128,15 @@ class TwitchM3U8Parser(M3U8Parser[TwitchM3U8, TwitchHLSSegment, HLSPlaylist]):
     def get_segment(self, uri: str, **data) -> TwitchHLSSegment:
         ad = self._is_segment_ad(self._date, self._extinf.title if self._extinf else None)
         segment: TwitchHLSSegment = super().get_segment(uri, ad=ad, prefetch=False)  # type: ignore[assignment]
+
+        # Special case where Twitch incorrectly inserts discontinuity tags between segments of the live content
+        if (
+            segment.discontinuity
+            and not segment.ad
+            and self.m3u8.segments
+            and not self.m3u8.segments[-1].ad
+        ):
+            segment.discontinuity = False
 
         return segment
 
@@ -130,8 +160,9 @@ class TwitchHLSStreamWorker(HLSStreamWorker):
     writer: "TwitchHLSStreamWriter"
     stream: "TwitchHLSStream"
 
-    def __init__(self, reader, *args, **kwargs):
-        self.had_content = False
+    def __init__(self, reader, *args, **kwargs) -> None:
+        self.had_content: bool = False
+        self.logged_ads: Deque[str] = deque(maxlen=10)
         super().__init__(reader, *args, **kwargs)
 
     def _playlist_reload_time(self, playlist: TwitchM3U8):  # type: ignore[override]
@@ -161,6 +192,27 @@ class TwitchHLSStreamWorker(HLSStreamWorker):
         # show pre-roll ads message only on the first playlist containing ads
         if self.stream.disable_ads and self.playlist_sequence == -1 and not self.had_content:
             log.info("Waiting for pre-roll ads to finish, be patient")
+
+        # log the duration of whole advertisement breaks
+        for daterange_ads in playlist.dateranges_ads:
+            if not daterange_ads.duration:  # pragma: no cover
+                continue
+
+            ads_id: Optional[str] = (
+                daterange_ads.x.get("X-TV-TWITCH-AD-COMMERCIAL-ID")
+                or daterange_ads.x.get("X-TV-TWITCH-AD-ROLL-TYPE")
+            )
+            if not ads_id or ads_id in self.logged_ads:
+                continue
+            self.logged_ads.append(ads_id)
+
+            # use Twitch's own ads duration metadata if available
+            try:
+                duration = math.ceil(float(daterange_ads.x.get("X-TV-TWITCH-AD-POD-FILLED-DURATION", "")))
+            except ValueError:
+                duration = math.ceil(daterange_ads.duration.total_seconds())
+
+            log.info(f"Detected advertisement break of {duration} second{'s' if duration != 1 else ''}")
 
         return super().process_segments(playlist)
 
@@ -222,8 +274,8 @@ class UsherService:
 
         return req.url
 
-    def channel(self, channel, **extra_params):
-        try:
+    def channel(self, channel: str, **extra_params) -> str:
+        with suppress(PluginError):
             extra_params_debug = validate.Schema(
                 validate.get("token"),
                 validate.parse_json(),
@@ -236,11 +288,10 @@ class UsherService:
                 },
             ).validate(extra_params)
             log.debug(f"{extra_params_debug!r}")
-        except PluginError:
-            pass
-        return self._create_url(f"/api/channel/hls/{channel}.m3u8", **extra_params)
 
-    def video(self, video_id, **extra_params):
+        return self._create_url(f"/api/channel/hls/{channel.lower()}.m3u8", **extra_params)
+
+    def video(self, video_id: str, **extra_params) -> str:
         return self._create_url(f"/vod/{video_id}", **extra_params)
 
 
@@ -566,12 +617,7 @@ class TwitchClientIntegrity:
                     return await client_session.evaluate(js_get_integrity_token, timeout=eval_timeout)
 
         try:
-            client_integrity = CDPClient.launch(
-                session,
-                acquire_client_integrity_token,
-                # headless mode gets detected by Twitch, so we have to disable it regardless the user config
-                headless=False,
-            )
+            client_integrity = CDPClient.launch(session, acquire_client_integrity_token)
         except BaseExceptionGroup:
             log.exception("Failed acquiring client integrity token")
         except Exception as err:
@@ -580,46 +626,40 @@ class TwitchClientIntegrity:
         if not client_integrity:
             return None
 
-        token, expiration = parse_json(client_integrity, schema=validate.Schema(
+        schema = validate.Schema(
+            validate.parse_json(),
             {"token": str, "expiration": int},
             validate.union_get("token", "expiration"),
-        ))
-        is_bad_bot = cls.decode_client_integrity_token(token, schema=validate.Schema(
-            {"is_bad_bot": str},
-            validate.get("is_bad_bot"),
-            validate.transform(lambda val: val.lower() != "false"),
-        ))
-        log.info(f"Is bad bot? {is_bad_bot}")
-        if is_bad_bot:
-            return None
+        )
+        token, expiration = schema.validate(client_integrity)
 
         return token, expiration / 1000
 
-    @staticmethod
-    def decode_client_integrity_token(data: str, schema: Optional[validate.Schema] = None):
-        if not data.startswith("v4.public."):
-            raise PluginError("Invalid client-integrity token format")
-        token = data[len("v4.public."):].replace("-", "+").replace("_", "/")
-        token += "=" * ((4 - (len(token) % 4)) % 4)
-        token = base64.b64decode(token.encode())[:-64].decode()
-        log.debug(f"Client-Integrity token: {token}")
 
-        return parse_json(token, exception=PluginError, schema=schema)
-
-
-@pluginmatcher(re.compile(r"""
-    https?://(?:(?P<subdomain>[\w-]+)\.)?twitch\.tv/
-    (?:
-        videos/(?P<videos_id>\d+)
-        |
-        (?P<channel>[^/?]+)
-        (?:
-            /v(?:ideo)?/(?P<video_id>\d+)
-            |
-            /clip/(?P<clip_name>[^/?]+)
-        )?
-    )
-""", re.VERBOSE))
+@pluginmatcher(
+    name="player",
+    pattern=re.compile(
+        r"https?://player\.twitch\.tv/\?.+",
+    ),
+)
+@pluginmatcher(
+    name="clip",
+    pattern=re.compile(
+        r"https?://(?:clips\.twitch\.tv|(?:[\w-]+\.)?twitch\.tv/(?:[\w-]+/)?clip)/(?P<clip_id>[^/?]+)",
+    ),
+)
+@pluginmatcher(
+    name="vod",
+    pattern=re.compile(
+        r"https?://(?:[\w-]+\.)?twitch\.tv/(?:[\w-]+/)?v(?:ideos?)?/(?P<video_id>\d+)",
+    ),
+)
+@pluginmatcher(
+    name="live",
+    pattern=re.compile(
+        r"https?://(?:(?!clips\.)[\w-]+\.)?twitch\.tv/(?P<channel>(?!v(?:ideos?)?/|clip/)[^/?]+)/?(?:\?|$)",
+    ),
+)
 @pluginargument(
     "disable-ads",
     action="store_true",
@@ -680,6 +720,11 @@ class TwitchClientIntegrity:
     """,
 )
 @pluginargument(
+    "force-client-integrity",
+    action="store_true",
+    help="Don't attempt requesting the streaming access token without a client-integrity token.",
+)
+@pluginargument(
     "purge-client-integrity",
     action="store_true",
     help="Purge cached Twitch client-integrity token and acquire a new one.",
@@ -695,27 +740,21 @@ class Twitch(Plugin):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        match = self.match.groupdict()
-        parsed = urlparse(self.url)
-        self.params = parse_qsd(parsed.query)
-        self.subdomain = match.get("subdomain")
-        self.video_id = None
-        self.channel = None
-        self.clip_name = None
-        self._checked_metadata = False
 
-        if self.subdomain == "player":
-            # pop-out player
-            if self.params.get("video"):
-                self.video_id = self.params["video"]
-            self.channel = self.params.get("channel")
-        elif self.subdomain == "clips":
-            # clip share URL
-            self.clip_name = match.get("channel")
-        else:
-            self.channel = match.get("channel") and match.get("channel").lower()
-            self.video_id = match.get("video_id") or match.get("videos_id")
-            self.clip_name = match.get("clip_name")
+        params = parse_qsd(urlparse(self.url).query)
+
+        self.channel = self.match["channel"] if self.matches["live"] else None
+        self.video_id = self.match["video_id"] if self.matches["vod"] else None
+        self.clip_id = self.match["clip_id"] if self.matches["clip"] else None
+
+        if self.matches["player"]:
+            self.channel = params.get("channel")
+            self.video_id = params.get("video")
+
+        try:
+            self.time_offset = hours_minutes_seconds_float(params.get("t", "0"))
+        except ValueError:
+            self.time_offset = 0
 
         self.api = TwitchAPI(
             session=self.session,
@@ -723,6 +762,8 @@ class Twitch(Plugin):
             access_token_param=self.get_option("access-token-param"),
         )
         self.usher = UsherService(session=self.session)
+
+        self._checked_metadata = False
 
         def method_factory(parent_method):
             def inner():
@@ -741,8 +782,8 @@ class Twitch(Plugin):
         try:
             if self.video_id:
                 data = self.api.metadata_video(self.video_id)
-            elif self.clip_name:
-                data = self.api.metadata_clips(self.clip_name)
+            elif self.clip_id:
+                data = self.api.metadata_clips(self.clip_id)
             elif self.channel:
                 data = self.api.metadata_channel(self.channel)
             else:  # pragma: no cover
@@ -779,8 +820,12 @@ class Twitch(Plugin):
         return device_id, token
 
     def _access_token(self, is_live, channel_or_vod):
+        response = ""
+        data = (None, None)
+
         # try without a client-integrity token first (the web player did the same on 2023-05-31)
-        response, *data = self.api.access_token(is_live, channel_or_vod)
+        if not self.options.get("force-client-integrity"):
+            response, *data = self.api.access_token(is_live, channel_or_vod)
 
         # try again with a client-integrity token if the API response was erroneous
         if response != "token":
@@ -825,18 +870,11 @@ class Twitch(Plugin):
         return self._get_hls_streams(url, restricted_bitrates, force_restart=True)
 
     def _get_hls_streams(self, url, restricted_bitrates, **extra_params):
-        time_offset = self.params.get("t", 0)
-        if time_offset:
-            try:
-                time_offset = hours_minutes_seconds_float(time_offset)
-            except ValueError:
-                time_offset = 0
-
         try:
             streams = TwitchHLSStream.parse_variant_playlist(
                 self.session,
                 url,
-                start_offset=time_offset,
+                start_offset=self.time_offset,
                 # Check if the media playlists are accessible:
                 # This is a workaround for checking the GQL API for the channel's live status,
                 # which can be delayed by up to a minute.
@@ -874,7 +912,7 @@ class Twitch(Plugin):
 
     def _get_clips(self):
         try:
-            sig, token, streams = self.api.clips(self.clip_name)
+            sig, token, streams = self.api.clips(self.clip_id)
         except (PluginError, TypeError):
             return
 
@@ -884,7 +922,7 @@ class Twitch(Plugin):
     def _get_streams(self):
         if self.video_id:
             return self._get_hls_streams_video()
-        elif self.clip_name:
+        elif self.clip_id:
             return self._get_clips()
         elif self.channel:
             return self._get_hls_streams_live()

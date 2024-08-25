@@ -145,7 +145,8 @@ class TestLoad:
             (
                 "streamlink.session",
                 "info",
-                f"Plugin testplugin is being overridden by {PATH_TESTPLUGINS_OVERRIDE / 'testplugin.py'}",
+                f"Plugin testplugin is being overridden by {PATH_TESTPLUGINS_OVERRIDE / 'testplugin.py'}"
+                + " (sha256:47d9c5ec4167565db13aae76f2fbedcf961f5fca386e60c4384ee5e92714b5f3)",
             ),
         ]
 
@@ -165,7 +166,8 @@ class TestLoad:
             (
                 "streamlink.session",
                 "info",
-                f"Plugin testplugin is being overridden by {PATH_TESTPLUGINS / 'testplugin.py'}",
+                f"Plugin testplugin is being overridden by {PATH_TESTPLUGINS / 'testplugin.py'}"
+                + " (sha256:627b3bd0f33bfba1c3db37c5c5e751f396eb376e0aaf971a3e9bd299e77a5dc0)",
             ),
         ]
 
@@ -286,6 +288,35 @@ class TestLoadPluginsData:
     def test_fallback_load_builtin(self, caplog: pytest.LogCaptureFixture, session: Streamlink, logs: list):
         assert session.plugins.get_names() == ["fake"]
         assert [(record.name, record.levelname, record.message) for record in caplog.get_records(when="setup")] == logs
+
+    # noinspection JsonStandardCompliance
+    @pytest.mark.parametrize(
+        "pluginsdata",
+        [
+            pytest.param(
+                # language=json
+                """
+                    // foo
+                    // bar
+                    {
+                        "testplugin": {
+                            "matchers": [
+                                {"pattern": "foo"}
+                            ],
+                            "arguments": []
+                        }
+                    }
+                """,
+                id="json-comments",
+            ),
+        ],
+        indirect=True,
+    )
+    def test_strip_json_comment(self, caplog: pytest.LogCaptureFixture, session: Streamlink, pluginsdata: str):
+        assert "fake" not in session.plugins
+        assert "testplugin" not in session.plugins
+        assert session.plugins.get_names() == ["testplugin"]
+        assert [(record.name, record.levelname, record.message) for record in caplog.get_records(when="setup")] == []
 
     @pytest.mark.parametrize("pluginsdata", [
         pytest.param(

@@ -1,8 +1,10 @@
+import json
 import unittest
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from unittest.mock import MagicMock, Mock, call, patch
+from urllib.parse import parse_qsl, urlparse
 
 import pytest
 import requests_mock as rm
@@ -20,38 +22,58 @@ class TestPluginCanHandleUrlTwitch(PluginCanHandleUrl):
     __plugin__ = Twitch
 
     should_match_groups = [
-        ("https://www.twitch.tv/twitch", {
-            "subdomain": "www",
-            "channel": "twitch",
+        (("live", "https://www.twitch.tv/CHANNELNAME"), {
+            "channel": "CHANNELNAME",
         }),
-        ("https://www.twitch.tv/videos/150942279", {
-            "subdomain": "www",
-            "videos_id": "150942279",
+        (("live", "https://www.twitch.tv/CHANNELNAME?"), {
+            "channel": "CHANNELNAME",
         }),
-        ("https://clips.twitch.tv/ObservantBenevolentCarabeefPhilosoraptor", {
-            "subdomain": "clips",
-            "channel": "ObservantBenevolentCarabeefPhilosoraptor",
+        (("live", "https://www.twitch.tv/CHANNELNAME/"), {
+            "channel": "CHANNELNAME",
         }),
-        ("https://www.twitch.tv/weplaydota/clip/FurryIntelligentDonutAMPEnergyCherry-akPRxv7Y3w58WmFq", {
-            "subdomain": "www",
-            "channel": "weplaydota",
-            "clip_name": "FurryIntelligentDonutAMPEnergyCherry-akPRxv7Y3w58WmFq",
+        (("live", "https://www.twitch.tv/CHANNELNAME/?"), {
+            "channel": "CHANNELNAME",
         }),
-        ("https://www.twitch.tv/twitch/video/292713971", {
-            "subdomain": "www",
-            "channel": "twitch",
-            "video_id": "292713971",
+
+        (("vod", "https://www.twitch.tv/videos/1963401646"), {
+            "video_id": "1963401646",
         }),
-        ("https://www.twitch.tv/twitch/v/292713971", {
-            "subdomain": "www",
-            "channel": "twitch",
-            "video_id": "292713971",
+        (("vod", "https://www.twitch.tv/dota2ti/v/1963401646"), {
+            "video_id": "1963401646",
         }),
+        (("vod", "https://www.twitch.tv/dota2ti/video/1963401646"), {
+            "video_id": "1963401646",
+        }),
+        (("vod", "https://www.twitch.tv/videos/1963401646?t=1h23m45s"), {
+            "video_id": "1963401646",
+        }),
+
+        (("clip", "https://clips.twitch.tv/GoodEndearingPassionfruitPMSTwin-QfRLYDPKlscgqt-4"), {
+            "clip_id": "GoodEndearingPassionfruitPMSTwin-QfRLYDPKlscgqt-4",
+        }),
+        (("clip", "https://www.twitch.tv/clip/GoodEndearingPassionfruitPMSTwin-QfRLYDPKlscgqt-4"), {
+            "clip_id": "GoodEndearingPassionfruitPMSTwin-QfRLYDPKlscgqt-4",
+        }),
+        (("clip", "https://www.twitch.tv/lirik/clip/GoodEndearingPassionfruitPMSTwin-QfRLYDPKlscgqt-4"), {
+            "clip_id": "GoodEndearingPassionfruitPMSTwin-QfRLYDPKlscgqt-4",
+        }),
+
+        (("player", "https://player.twitch.tv/?parent=twitch.tv&channel=CHANNELNAME"), {}),
+        (("player", "https://player.twitch.tv/?parent=twitch.tv&video=1963401646"), {}),
+        (("player", "https://player.twitch.tv/?parent=twitch.tv&video=1963401646&t=1h23m45s"), {}),
     ]
 
     should_not_match = [
         "https://www.twitch.tv",
         "https://www.twitch.tv/",
+        "https://www.twitch.tv/videos/",
+        "https://www.twitch.tv/dota2ti/v",
+        "https://www.twitch.tv/dota2ti/video/",
+        "https://clips.twitch.tv/",
+        "https://www.twitch.tv/clip/",
+        "https://www.twitch.tv/lirik/clip/",
+        "https://player.twitch.tv/",
+        "https://player.twitch.tv/?",
     ]
 
 
@@ -189,7 +211,7 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
             duration=1,
             attrid="foo",
             classname="/",
-            custom={"X-TV-TWITCH-AD-URL": "/"},
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "PREROLL"},
         )
 
         segments = self.subject([
@@ -203,7 +225,10 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
 
     @patch("streamlink.plugins.twitch.log")
     def test_hls_disable_ads_has_preroll(self, mock_log):
-        daterange = TagDateRangeAd(duration=4)
+        daterange = TagDateRangeAd(
+            duration=4,
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "PREROLL"},
+        )
         segments = self.subject([
             Playlist(0, [daterange, Segment(0), Segment(1)]),
             Playlist(2, [daterange, Segment(2), Segment(3)]),
@@ -217,11 +242,16 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
         assert mock_log.info.mock_calls == [
             call("Will skip ad segments"),
             call("Waiting for pre-roll ads to finish, be patient"),
+            call("Detected advertisement break of 4 seconds"),
         ]
 
     @patch("streamlink.plugins.twitch.log")
-    def test_hls_disable_ads_has_midstream(self, mock_log):
-        daterange = TagDateRangeAd(start=DATETIME_BASE + timedelta(seconds=2), duration=2)
+    def test_hls_disable_ads_has_midroll(self, mock_log):
+        daterange = TagDateRangeAd(
+            start=DATETIME_BASE + timedelta(seconds=2),
+            duration=2,
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "MIDROLL", "X-TV-TWITCH-AD-COMMERCIAL-ID": "123"},
+        )
         segments = self.subject([
             Playlist(0, [Segment(0), Segment(1)]),
             Playlist(2, [daterange, Segment(2), Segment(3)]),
@@ -234,11 +264,64 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
         assert all(self.called(s) for s in segments.values()), "Downloads all segments"
         assert mock_log.info.mock_calls == [
             call("Will skip ad segments"),
+            call("Detected advertisement break of 2 seconds"),
+        ]
+
+    @patch("streamlink.plugins.twitch.log")
+    def test_hls_disable_ads_has_preroll_and_midstream(self, mock_log):
+        ads1a = TagDateRangeAd(
+            start=DATETIME_BASE,
+            duration=2,
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "PREROLL"},
+        )
+        ads1b = TagDateRangeAd(
+            start=DATETIME_BASE,
+            duration=1,
+        )
+        ads2 = TagDateRangeAd(
+            start=DATETIME_BASE + timedelta(seconds=4),
+            duration=4,
+            custom={
+                "X-TV-TWITCH-AD-ROLL-TYPE": "MIDROLL",
+                "X-TV-TWITCH-AD-COMMERCIAL-ID": "123",
+            },
+        )
+        ads3 = TagDateRangeAd(
+            start=DATETIME_BASE + timedelta(seconds=8),
+            duration=1,
+            custom={
+                "X-TV-TWITCH-AD-ROLL-TYPE": "MIDROLL",
+                "X-TV-TWITCH-AD-COMMERCIAL-ID": "456",
+                "X-TV-TWITCH-AD-POD-FILLED-DURATION": ".9",
+            },
+        )
+        segments = self.subject([
+            Playlist(0, [ads1a, ads1b, Segment(0)]),
+            Playlist(1, [ads1a, ads1b, Segment(1)]),
+            Playlist(2, [Segment(2), Segment(3)]),
+            Playlist(4, [ads2, Segment(4), Segment(5)]),
+            Playlist(6, [ads2, Segment(6), Segment(7)]),
+            Playlist(8, [ads3, Segment(8), Segment(9)], end=True),
+        ], streamoptions={"disable_ads": True, "low_latency": False})
+
+        self.await_write(10)
+        data = self.await_read(read_all=True)
+        assert data == self.content(segments, cond=lambda s: s.num not in (0, 1, 4, 5, 6, 7, 8)), "Filters out all ad segments"
+        assert all(self.called(s) for s in segments.values()), "Downloads all segments"
+        assert mock_log.info.mock_calls == [
+            call("Will skip ad segments"),
+            call("Waiting for pre-roll ads to finish, be patient"),
+            call("Detected advertisement break of 2 seconds"),
+            call("Detected advertisement break of 4 seconds"),
+            call("Detected advertisement break of 1 second"),
         ]
 
     @patch("streamlink.plugins.twitch.log")
     def test_hls_no_disable_ads_has_preroll(self, mock_log):
-        daterange = TagDateRangeAd(duration=2)
+        daterange = TagDateRangeAd(
+            duration=2,
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "PREROLL"},
+        )
         segments = self.subject([
             Playlist(0, [daterange, Segment(0), Segment(1)]),
             Playlist(2, [Segment(2), Segment(3)], end=True),
@@ -248,7 +331,9 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
         data = self.await_read(read_all=True)
         assert data == self.content(segments), "Doesn't filter out segments"
         assert all(self.called(s) for s in segments.values()), "Downloads all segments"
-        assert mock_log.info.mock_calls == [], "Doesn't log anything"
+        assert mock_log.info.mock_calls == [
+            call("Detected advertisement break of 2 seconds"),
+        ]
 
     @patch("streamlink.plugins.twitch.log")
     def test_hls_low_latency_has_prefetch(self, mock_log):
@@ -305,7 +390,10 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
 
     @patch("streamlink.plugins.twitch.log")
     def test_hls_low_latency_has_prefetch_has_preroll(self, mock_log):
-        daterange = TagDateRangeAd(duration=4)
+        daterange = TagDateRangeAd(
+            duration=4,
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "PREROLL"},
+        )
         segments = self.subject([
             Playlist(0, [daterange, Segment(0), Segment(1), Segment(2), Segment(3)]),
             Playlist(4, [Segment(4), Segment(5), Segment(6), Segment(7), SegmentPrefetch(8), SegmentPrefetch(9)], end=True),
@@ -316,11 +404,17 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
         assert data == self.content(segments, cond=lambda s: s.num > 1), "Skips first two segments due to reduced live-edge"
         assert not any(self.called(s) for s in segments.values() if s.num < 2), "Skips first two preroll segments"
         assert all(self.called(s) for s in segments.values() if s.num >= 2), "Downloads all remaining segments"
-        assert mock_log.info.mock_calls == [call("Low latency streaming (HLS live edge: 2)")]
+        assert mock_log.info.mock_calls == [
+            call("Low latency streaming (HLS live edge: 2)"),
+            call("Detected advertisement break of 4 seconds"),
+        ]
 
     @patch("streamlink.plugins.twitch.log")
     def test_hls_low_latency_has_prefetch_disable_ads_has_preroll(self, mock_log):
-        daterange = TagDateRangeAd(duration=4)
+        daterange = TagDateRangeAd(
+            duration=4,
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "PREROLL"},
+        )
         self.subject([
             Playlist(0, [daterange, Segment(0), Segment(1), Segment(2), Segment(3)]),
             Playlist(4, [Segment(4), Segment(5), Segment(6), Segment(7), SegmentPrefetch(8), SegmentPrefetch(9)], end=True),
@@ -332,6 +426,7 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
             call("Will skip ad segments"),
             call("Low latency streaming (HLS live edge: 2)"),
             call("Waiting for pre-roll ads to finish, be patient"),
+            call("Detected advertisement break of 4 seconds"),
         ]
 
     @patch("streamlink.plugins.twitch.log")
@@ -341,8 +436,13 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
         Seg, Pre = Segment, SegmentPrefetch
         ads = [
             Tag("EXT-X-DISCONTINUITY"),
-            TagDateRangeAd(start=DATETIME_BASE + timedelta(seconds=3), duration=4),
+            TagDateRangeAd(
+                start=DATETIME_BASE + timedelta(seconds=3),
+                duration=4,
+                custom={"X-TV-TWITCH-AD-ROLL-TYPE": "MIDROLL"},
+            ),
         ]
+        tls = Tag("EXT-X-TWITCH-LIVE-SEQUENCE", 7)
         # noinspection PyTypeChecker
         segments = self.subject([
             # regular stream data with prefetch segments
@@ -354,9 +454,9 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
             # still no prefetch segments while ads are playing
             Playlist(3, [*ads, Seg(3), Seg(4), Seg(5), Seg(6)]),
             # new prefetch segments on the first regular segment occurrence
-            Playlist(4, [*ads, Seg(4), Seg(5), Seg(6), Seg(7), Pre(8), Pre(9)]),
-            Playlist(5, [*ads, Seg(5), Seg(6), Seg(7), Seg(8), Pre(9), Pre(10)]),
-            Playlist(6, [*ads, Seg(6), Seg(7), Seg(8), Seg(9), Pre(10), Pre(11)]),
+            Playlist(4, [*ads, Seg(4), Seg(5), Seg(6), tls, Seg(7), Pre(8), Pre(9)]),
+            Playlist(5, [*ads, Seg(5), Seg(6), tls, Seg(7), Seg(8), Pre(9), Pre(10)]),
+            Playlist(6, [*ads, Seg(6), tls, Seg(7), Seg(8), Seg(9), Pre(10), Pre(11)]),
             Playlist(7, [Seg(7), Seg(8), Seg(9), Seg(10), Pre(11), Pre(12)], end=True),
         ], streamoptions={"disable_ads": True, "low_latency": True})
 
@@ -366,11 +466,15 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
         assert mock_log.info.mock_calls == [
             call("Will skip ad segments"),
             call("Low latency streaming (HLS live edge: 2)"),
+            call("Detected advertisement break of 4 seconds"),
         ]
 
     @patch("streamlink.plugins.twitch.log")
     def test_hls_low_latency_no_prefetch_disable_ads_has_preroll(self, mock_log):
-        daterange = TagDateRangeAd(duration=4)
+        daterange = TagDateRangeAd(
+            duration=4,
+            custom={"X-TV-TWITCH-AD-ROLL-TYPE": "PREROLL"},
+        )
         self.subject([
             Playlist(0, [daterange, Segment(0), Segment(1), Segment(2), Segment(3)]),
             Playlist(4, [Segment(4), Segment(5), Segment(6), Segment(7)], end=True),
@@ -382,6 +486,7 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
             call("Will skip ad segments"),
             call("Low latency streaming (HLS live edge: 2)"),
             call("Waiting for pre-roll ads to finish, be patient"),
+            call("Detected advertisement break of 4 seconds"),
             call("This is not a low latency stream"),
         ]
 
@@ -394,6 +499,100 @@ class TestTwitchHLSStream(TestMixinStreamHLS, unittest.TestCase):
         self.await_write(4)
         self.await_read(read_all=True)
         assert self.thread.reader.worker.playlist_reload_time == pytest.approx(23 / 3)
+
+    @patch("streamlink.stream.hls.hls.log")
+    def test_hls_prefetch_after_discontinuity(self, mock_log):
+        segments = self.subject([
+            Playlist(0, [Segment(0), Segment(1)]),
+            Playlist(2, [Segment(2), Segment(3), Tag("EXT-X-DISCONTINUITY"), SegmentPrefetch(4), SegmentPrefetch(5)]),
+            Playlist(6, [Segment(6), Segment(7)], end=True),
+        ], streamoptions={"disable_ads": True, "low_latency": True})
+
+        self.await_write(8)
+        assert self.await_read(read_all=True) == self.content(segments, cond=lambda seg: seg.num not in (4, 5))
+        assert mock_log.warning.mock_calls == [
+            call("Encountered a stream discontinuity. This is unsupported and will result in incoherent output data."),
+        ]
+
+    @patch("streamlink.stream.hls.hls.log")
+    def test_hls_ignored_discontinuity(self, mock_log):
+        Seg, Pre = Segment, SegmentPrefetch
+        discontinuity = Tag("EXT-X-DISCONTINUITY")
+        tls = Tag("EXT-X-TWITCH-LIVE-SEQUENCE", 1234)  # value is irrelevant
+        segments = self.subject([
+            Playlist(0, [Seg(0), discontinuity, Seg(1)]),
+            Playlist(2, [Seg(2), Seg(3), discontinuity, Seg(4), Seg(5)]),
+            Playlist(6, [Seg(6), Seg(7), discontinuity, tls, Pre(8), Pre(9)]),
+            Playlist(10, [Seg(10), Seg(11), discontinuity, tls, Pre(12), discontinuity, tls, Pre(13)], end=True),
+        ], streamoptions={"disable_ads": True, "low_latency": True})
+
+        self.await_write(14)
+        assert self.await_read(read_all=True) == self.content(segments)
+        assert mock_log.warning.mock_calls == []
+
+
+class TestUsherService:
+    @pytest.fixture(autouse=True)
+    def caplog(self, caplog: pytest.LogCaptureFixture):
+        caplog.set_level(1, "streamlink.plugins.twitch")
+        return caplog
+
+    @pytest.fixture()
+    def plugin(self, request: pytest.FixtureRequest, session: Streamlink):
+        return Twitch(
+            session,
+            "https://twitch.tv/twitch",
+            options=Options(getattr(request, "param", {})),
+        )
+
+    @pytest.fixture()
+    def endpoint(self, request: pytest.FixtureRequest, caplog: pytest.LogCaptureFixture, plugin: Twitch):
+        param = getattr(request, "param", {})
+        service = param.get("service", "channel")
+        args = param.get("args", ("twitch", ))
+
+        token = {
+            "expires": 9876543210,
+            "channel": "twitch",
+            "channel_id": 123,
+            "user_id": 456,
+            "user_ip": "127.0.0.1",
+            "adblock": False,
+            "geoblock_reason": "",
+            "hide_ads": False,
+            "server_ads": True,
+            "show_ads": True,
+        }
+
+        return getattr(plugin.usher, service)(*args, token=json.dumps(token), sig="tokensignature")
+
+    @pytest.mark.parametrize(("endpoint", "expected_path", "logs"), [
+        pytest.param(
+            {"service": "channel", "args": ("TWITCH", )},
+            "/api/channel/hls/twitch.m3u8",
+            [(
+                "streamlink.plugins.twitch",
+                "debug",
+                "{'adblock': False, 'geoblock_reason': '', 'hide_ads': False, 'server_ads': True, 'show_ads': True}",
+            )],
+            id="channel",
+        ),
+        pytest.param(
+            {"service": "video", "args": ("1234567890", )},
+            "/vod/1234567890",
+            [],
+            id="video",
+        ),
+    ], indirect=["endpoint"])
+    def test_service(self, caplog: pytest.LogCaptureFixture, endpoint: str, expected_path: str, logs: list):
+        url = urlparse(endpoint)
+        assert url.path == expected_path
+
+        qs = dict(parse_qsl(url.query))
+        assert qs.get("token")
+        assert qs.get("sig")
+
+        assert [(r.name, r.levelname, r.message) for r in caplog.get_records(when="setup")] == logs
 
 
 class TestTwitchAPIAccessToken:

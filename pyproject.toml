@@ -177,8 +177,17 @@ extend-exclude = [
   "src/streamlink_cli/packages/",
 ]
 
+[tool.ruff.format]
+preview = true
+line-ending = "lf"
+quote-style = "double"
+skip-magic-trailing-comma = false
+exclude = [
+  "src/streamlink/session/http_useragents.py",
+  "src/streamlink/webbrowser/cdp/devtools/*.py",
+]
+
 [tool.ruff.lint]
-ignore-init-module-imports = true
 select = [
   # pycodestyle
   "E",
@@ -191,6 +200,8 @@ select = [
   "PLW",
   # isort
   "I",
+  # flake8-async
+  "ASYNC",
   # flake8-builtins
   "A",
   # flake8-bugbear
@@ -205,6 +216,8 @@ select = [
   "ISC",
   # flake8-no-pep420
   "INP",
+  # flake8-logging
+  "LOG",
   # flake8-pie
   "PIE",
   # flake8-print
@@ -220,6 +233,8 @@ select = [
 ]
 ignore = [
   "A003",  # builtin-attribute-shadowing
+  "A005",  # builtin-module-shadowing
+  "ASYNC109",  # async-function-with-timeout
   "C408",  # unnecessary-collection-call
   "ISC003",  # explicit-string-concatenation
   "PLC1901",  # compare-to-empty-string
@@ -236,8 +251,8 @@ ignore = [
 "script/**" = ["INP"]
 "src/streamlink/__init__.py" = ["I"]
 "src/streamlink/_version.py" = ["I"]
-"src/streamlink/plugin/api/useragents.py" = ["E501"]
 "src/streamlink/plugins/*" = ["RUF012"]
+"src/streamlink/session/http_useragents.py" = ["E501"]
 "src/streamlink/webbrowser/cdp/devtools/*" = ["E303", "E501", "F401"]
 "src/streamlink_cli/main.py" = ["PLW0603"]
 "tests/**" = ["RUF012"]
@@ -247,8 +262,18 @@ known-first-party = ["streamlink", "streamlink_cli"]
 lines-after-imports = 2
 combine-as-imports = true
 
+[tool.ruff.lint.flake8-builtins]
+builtins-ignorelist = [
+  "BaseExceptionGroup", # compat import from exceptiongroup pkg
+  "ExceptionGroup", # compat import from exceptiongroup pkg
+]
+
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = true
+mark-parentheses = true
 
 [tool.ruff.lint.flake8-quotes]
 avoid-escape = false

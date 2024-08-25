@@ -179,8 +179,10 @@ class StreamlinkPlugins:
             if lookup is None:
                 continue
             mod, plugin = lookup
-            if name in self._plugins or name in self._matchers:
-                log.info(f"Plugin {name} is being overridden by {mod.__file__}")
+            if (name in self._plugins or name in self._matchers) and mod.__file__:
+                with open(mod.__file__, "rb") as fh:
+                    sha256 = hashlib.sha256(fh.read())
+                log.info(f"Plugin {name} is being overridden by {mod.__file__} (sha256:{sha256.hexdigest()})")
             plugins[name] = plugin
 
         return plugins
@@ -198,6 +200,9 @@ class StreamlinkPlugins:
             return None
 
         return mod, mod.__plugin__
+
+
+_RE_STRIP_JSON_COMMENTS = re.compile(rb"^(?:\s*//[^\n]*\n+)+")
 
 
 _TListOfConstants: TypeAlias = List[Union[None, bool, int, float, str]]
@@ -273,6 +278,7 @@ class StreamlinkPluginsData:
 
     @classmethod
     def _parse(cls, content: bytes) -> Tuple[Dict[str, Matchers], Dict[str, Arguments]]:
+        content = _RE_STRIP_JSON_COMMENTS.sub(b"", content)
         data: Dict[str, _TPluginData] = json.loads(content)
 
         try:

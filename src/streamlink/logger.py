@@ -2,6 +2,7 @@ import logging
 import sys
 import warnings
 from logging import CRITICAL, DEBUG, ERROR, INFO, WARNING
+from os import devnull
 from pathlib import Path
 from sys import version_info
 from threading import Lock
@@ -94,14 +95,14 @@ _config_lock = Lock()
 
 
 class StringFormatter(logging.Formatter):
-    def __init__(self, fmt, datefmt=None, style="%", remove_base=None):
-        if style not in ("{", "%"):
-            raise ValueError("Only {} and % formatting styles are supported")
-        super().__init__(fmt, datefmt=datefmt, style=style)
-        self.style = style
-        self.fmt = fmt
-        self.remove_base = remove_base or []
-        self._usesTime = (style == "%" and "%(asctime)" in fmt) or (style == "{" and "{asctime}" in fmt)
+    def __init__(self, *args, remove_base: Optional[List[str]] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._remove_base = remove_base or []
+        self._usesTime = super().usesTime()
+
+        # Validate the format's fields
+        rec = logging.LogRecord("", 1, "", 1, "", None, None)
+        super().format(rec)
 
     def usesTime(self):
         return self._usesTime
@@ -111,14 +112,8 @@ class StringFormatter(logging.Formatter):
 
         return tdt.strftime(datefmt or self.default_time_format)
 
-    def formatMessage(self, record):
-        if self.style == "{":
-            return self.fmt.format(**record.__dict__)
-        else:
-            return self.fmt % record.__dict__
-
     def format(self, record):
-        for rbase in self.remove_base:
+        for rbase in self._remove_base:
             record.name = record.name.replace(f"{rbase}.", "")
         record.levelname = record.levelname.lower()
 
@@ -130,6 +125,13 @@ class StreamHandler(logging.StreamHandler):
         super().__init__(*args, **kwargs)
         self._stream_reconfigure()
 
+    def flush(self):
+        try:
+            super().flush()
+        except OSError:
+            # Python doesn't raise BrokenPipeError on Windows
+            pass
+
     def setStream(self, stream):
         res = super().setStream(stream)
         if res:  # pragma: no branch
@@ -138,6 +140,8 @@ class StreamHandler(logging.StreamHandler):
         return res
 
     def _stream_reconfigure(self):
+        if not self.stream:
+            return
         # make stream write calls escape unsupported characters (stdout/stderr encoding is not guaranteed to be utf-8)
         self.stream.reconfigure(errors="backslashreplace")
 
@@ -213,11 +217,14 @@ def basicConfig(
             handler = logging.FileHandler(filename, filemode, encoding="utf-8")
         else:
             handler = StreamHandler(stream)
+            # logging.StreamHandler internally falls back to sys.stderr if stream is None
+            # sys.stderr however can also be None if fd2 doesn't exist, so use a devnull FileHandler in this case instead
+            if not handler.stream:
+                handler = logging.FileHandler(devnull)
 
-        # noinspection PyTypeChecker
         formatter = StringFormatter(
-            format,
-            datefmt,
+            fmt=format,
+            datefmt=datefmt,
             style=style,
             remove_base=remove_base or REMOVE_BASE,
         )

@@ -5,7 +5,6 @@ versioningit >=2.0.0,<4  # required for being able to run editable installs
 
 # tests
 pytest >=8.0.0
-pytest-asyncio
 pytest-trio
 requests-mock
 freezegun >=1.0.0
@@ -15,10 +14,10 @@ pytest-cov
 coverage[toml]
 
 # code-linting
-ruff ==0.6.0
+ruff ==0.6.7
 
 # typing
-mypy ==1.10.1
+mypy ==1.11.2
 lxml-stubs
 trio-typing
 types-freezegun

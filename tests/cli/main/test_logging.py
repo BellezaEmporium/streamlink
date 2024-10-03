@@ -1,5 +1,6 @@
 import logging
 import sys
+from errno import EINVAL, EPIPE
 from io import StringIO
 from pathlib import Path
 from textwrap import dedent
@@ -9,6 +10,7 @@ import pytest
 
 import streamlink_cli.main
 import tests
+from streamlink.logger import ALL, TRACE, StringFormatter
 from streamlink.session import Streamlink
 from streamlink_cli.argparser import ArgumentParser
 from streamlink_cli.exceptions import StreamlinkCLIError
@@ -16,39 +18,10 @@ from streamlink_cli.main import build_parser
 
 
 @pytest.fixture(autouse=True)
-def argv(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
-    argv = getattr(request, "param", [])
-    monkeypatch.setattr("sys.argv", ["streamlink", *argv])
-
-    return argv
-
-
-@pytest.fixture(autouse=True)
-def _setup(monkeypatch: pytest.MonkeyPatch, session: Streamlink):
+def session(session: Streamlink):
     session.plugins.load_path(Path(tests.__path__[0]) / "plugin")
 
-    monkeypatch.setattr("streamlink_cli.main.CONFIG_FILES", [])
-    monkeypatch.setattr("streamlink_cli.main.streamlink", session)
-    monkeypatch.setattr("streamlink_cli.main.setup_streamlink", Mock())
-    monkeypatch.setattr("streamlink_cli.main.setup_plugins", Mock())
-    monkeypatch.setattr("streamlink_cli.main.setup_signals", Mock())
-    monkeypatch.setattr("streamlink_cli.argparser.find_default_player", Mock())
-
-    level = streamlink_cli.main.logger.root.level
-
-    try:
-        yield
-    finally:
-        streamlink_cli.main.logger.root.handlers.clear()
-        streamlink_cli.main.logger.root.setLevel(level)
-        streamlink_cli.main.args = None  # type: ignore[assignment]
-        streamlink_cli.main.console = None  # type: ignore[assignment]
-
-
-@pytest.fixture(autouse=True)
-def _euid(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
-    euid = getattr(request, "param", 1000)
-    monkeypatch.setattr("os.geteuid", Mock(return_value=euid), raising=False)
+    return session
 
 
 @pytest.fixture()
@@ -95,7 +68,6 @@ class TestStdoutStderr:
         self,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture,
-        parser: ArgumentParser,
         argv: list,
         stdout: str,
         stderr: str,
@@ -106,7 +78,6 @@ class TestStdoutStderr:
             childlogger.error("b")
             raise StreamlinkCLIError("c")
 
-        monkeypatch.setattr("streamlink_cli.main.build_parser", lambda: parser)
         monkeypatch.setattr("streamlink_cli.main.run", run)
 
         with pytest.raises(SystemExit) as excinfo:
@@ -116,6 +87,92 @@ class TestStdoutStderr:
         out, err = capsys.readouterr()
         assert out == stdout
         assert err == stderr
+
+    def test_no_stdout(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr("sys.stdout", None)
+
+        with pytest.raises(SystemExit) as excinfo:
+            streamlink_cli.main.main()
+        assert excinfo.value.code == 0
+
+    @pytest.mark.parametrize(
+        "errno",
+        [
+            pytest.param(EPIPE, id="EPIPE", marks=pytest.mark.posix_only),
+            pytest.param(EINVAL, id="EINVAL", marks=pytest.mark.windows_only),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "code",
+        [0, 1],
+    )
+    def test_brokenpipeerror(self, monkeypatch: pytest.MonkeyPatch, errno: int, code: int):
+        def run(*_, **__):
+            def flush(*_, **__):
+                try:
+                    exception = OSError()
+                    exception.errno = errno
+                    raise exception
+                finally:
+                    monkeypatch.undo()
+
+            monkeypatch.setattr("sys.stdout.flush", flush)
+
+            return code
+
+        monkeypatch.setattr("streamlink_cli.main.run", run)
+
+        with pytest.raises(SystemExit) as excinfo:
+            streamlink_cli.main.main()
+        assert excinfo.value.code == code
+
+    def test_setup_uncaught_exceptions(self, monkeypatch: pytest.MonkeyPatch):
+        exception = Exception()
+        monkeypatch.setattr("streamlink_cli.main.setup", Mock(side_effect=exception))
+
+        with pytest.raises(Exception) as excinfo:  # noqa: PT011
+            streamlink_cli.main.main()
+        assert excinfo.value is exception, "Does not catch non-StreamlinkCLIError exceptions"
+
+    @pytest.mark.parametrize(
+        ("argv", "msg"),
+        [
+            pytest.param(
+                ["--logformat", "message"],
+                "Logging setup error: invalid format: no fields\n",
+                id="no-fields",
+            ),
+            pytest.param(
+                ["--logformat", "%(message)s"],
+                "Logging setup error: invalid format: no fields\n",
+                id="wrong-style",
+            ),
+            pytest.param(
+                ["--logformat", "{doesnotexist}"],
+                "Logging setup error: Formatting field not found in record: 'doesnotexist'\n",
+                id="field-not-found",
+            ),
+        ],
+        indirect=["argv"],
+    )
+    def test_logging_setup_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        argv: list,
+        msg: str,
+    ):
+        mock_run = Mock()
+        monkeypatch.setattr("streamlink_cli.main.run", mock_run)
+
+        with pytest.raises(SystemExit) as excinfo:
+            streamlink_cli.main.main()
+        assert excinfo.value.code == 1
+        assert not mock_run.called
+
+        out, err = capsys.readouterr()
+        assert out == ""
+        assert err == msg
 
 
 class TestInfos:
@@ -271,6 +328,60 @@ class TestInfos:
 
         streamlink_cli.main.setup(parser)
         assert [(record.name, record.levelname, record.message) for record in caplog.records] == logs
+
+
+@pytest.mark.parametrize(
+    ("argv", "level", "fmt", "datefmt"),
+    [
+        pytest.param(
+            [],
+            logging.INFO,
+            "[{name}][{levelname}] {message}",
+            "%H:%M:%S",
+            id="default",
+        ),
+        pytest.param(
+            ["--loglevel", "trace"],
+            TRACE,
+            "[{asctime}][{name}][{levelname}] {message}",
+            "%H:%M:%S.%f",
+            id="loglevel=trace",
+        ),
+        pytest.param(
+            ["--loglevel", "all"],
+            ALL,
+            "[{asctime}][{name}][{levelname}] {message}",
+            "%H:%M:%S.%f",
+            id="loglevel=all",
+        ),
+        pytest.param(
+            ["--loglevel", "all", "--logformat", "{asctime} - {message}"],
+            ALL,
+            "{asctime} - {message}",
+            "%H:%M:%S.%f",
+            id="logformat",
+        ),
+        pytest.param(
+            ["--loglevel", "all", "--logdateformat", "%Y-%m-%dT%H:%M:%S.%f"],
+            ALL,
+            "[{asctime}][{name}][{levelname}] {message}",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            id="logdateformat",
+        ),
+    ],
+    indirect=["argv"],
+)
+def test_logformat(argv: list, parser: ArgumentParser, level: int, fmt: str, datefmt: str):
+    streamlink_cli.main.setup(parser)
+
+    rootlogger = logging.getLogger("streamlink")
+    assert rootlogger.level == level
+    assert rootlogger.handlers
+    formatter = rootlogger.handlers[0].formatter
+    assert isinstance(formatter, StringFormatter)
+    assert isinstance(formatter._style, logging.StrFormatStyle)
+    assert formatter._fmt == fmt
+    assert formatter.datefmt == datefmt
 
 
 class TestLogfile:

@@ -60,13 +60,15 @@ class ArgumentParser(argparse.ArgumentParser):
         else:
             yield f"{prefix}{name}"
 
+    # noinspection PyProtectedMember,PyUnresolvedReferences,PyTypeChecker
     def _match_argument(self, action, arg_strings_pattern):
         # - https://github.com/streamlink/streamlink/issues/971
         # - https://bugs.python.org/issue9334
+        # - https://github.com/python/cpython/blame/v3.13.0rc2/Lib/argparse.py#L2227-L2247
 
         # match the pattern for this action to the arg strings
         nargs_pattern = self._get_nargs_pattern(action)
-        match = argparse._re.match(nargs_pattern, arg_strings_pattern)
+        match = re.match(nargs_pattern, arg_strings_pattern)
 
         # if no match, see if we can emulate optparse and return the
         # required number of arguments regardless of their values
@@ -82,10 +84,9 @@ class ArgumentParser(argparse.ArgumentParser):
                 argparse.OPTIONAL: argparse._("expected at most one argument"),
                 argparse.ONE_OR_MORE: argparse._("expected at least one argument"),
             }
-            default = argparse.ngettext("expected %s argument",
-                                        "expected %s arguments",
-                                        action.nargs) % action.nargs
-            msg = nargs_errors.get(action.nargs, default)
+            msg = nargs_errors.get(action.nargs)
+            if msg is None:
+                msg = argparse.ngettext("expected %s argument", "expected %s arguments", action.nargs) % action.nargs
             raise argparse.ArgumentError(action, msg)
 
         # return the number of arguments matched
@@ -288,6 +289,33 @@ def build_parser():
         {', '.join([f'`{level}`' for level in logger.levels])}
 
         Default is "info".
+        """,
+    )
+    general.add_argument(
+        "--logformat",
+        metavar="FORMAT",
+        help="""
+        Set a custom logging format.
+
+        See the Python standard library's `logging.Formatter` docs for more information about the logging format
+        and the available `LogRecord` attributes. Streamlink's formatter uses the curly brace style.
+
+        The default format depends on the chosen log level (may include the `asctime` attribute).
+
+        Default is "[{name}][{levelname}] {message}".
+        """,
+    )
+    general.add_argument(
+        "--logdateformat",
+        metavar="DATEFORMAT",
+        help="""
+        Set a custom logging date format.
+
+        This formats the `LogRecord`'s `asctime` attribute via `strftime()`.
+
+        The default date format depends on the chosen log level (may include fractions).
+
+        Default is "%%H:%%M:%%S".
         """,
     )
     general.add_argument(
@@ -598,15 +626,22 @@ def build_parser():
 
     output = parser.add_argument_group("File output options")
     output.add_argument(
+        "-O", "--stdout",
+        action="store_true",
+        help="""
+        Write stream data to `stdout` instead of playing it in the --player.
+        """,
+    )
+    output.add_argument(
         "-o", "--output",
         metavar="FILENAME",
         help="""
-        Write stream data to `FILENAME` instead of playing it. If `FILENAME` is set to `-` (dash), then the stream data will be
-        written to stdout, similar to the --stdout argument.
+        Write stream data to `FILENAME` instead of playing it in the --player.
+        If `FILENAME` is set to `-` (dash), then the stream data will be written to `stdout`, similar to the --stdout argument.
 
         Non-existent directories and subdirectories will be created if they do not exist, if filesystem permissions allow.
 
-        You will be prompted if the file already exists.
+        Unless --force is set, Streamlink will ask for confirmation before writing if `FILENAME` already exists.
 
         Please see the "Metadata variables" section of Streamlink's CLI documentation for all available metadata variables,
         as well as the "Plugins" section for the list of metadata variables defined in each plugin.
@@ -619,22 +654,16 @@ def build_parser():
         """,
     )
     output.add_argument(
-        "-O", "--stdout",
-        action="store_true",
-        help="""
-        Write stream data to stdout instead of playing it.
-        """,
-    )
-    output.add_argument(
         "-r", "--record",
         metavar="FILENAME",
         help="""
-        Open the stream in the player, while at the same time writing it to `FILENAME`. If `FILENAME` is set to `-` (dash),
-        then the stream data will be written to stdout, similar to the --stdout argument, while still opening the player.
+        Write stream data to `FILENAME` while at the same time allowing playback in the --player or writing it to --stdout.
+        If `FILENAME` is set to `-` (dash), then the stream data will be written to `stdout`, similar to the --stdout argument,
+        while still opening the player.
 
         Non-existent directories and subdirectories will be created if they do not exist, if filesystem permissions allow.
 
-        You will be prompted if the file already exists.
+        Unless --force is set, Streamlink will ask for confirmation before writing if `FILENAME` already exists.
 
         Please see the "Metadata variables" section of Streamlink's CLI documentation for all available metadata variables,
         as well as the "Plugins" section for the list of metadata variables defined in each plugin.
@@ -650,20 +679,7 @@ def build_parser():
         "-R", "--record-and-pipe",
         metavar="FILENAME",
         help="""
-        Write stream data to stdout, while at the same time writing it to `FILENAME`.
-
-        Non-existent directories and subdirectories will be created if they do not exist, if filesystem permissions allow.
-
-        You will be prompted if the file already exists.
-
-        Please see the "Metadata variables" section of Streamlink's CLI documentation for all available metadata variables,
-        as well as the "Plugins" section for the list of metadata variables defined in each plugin.
-
-        Unsupported characters in substituted variables will be replaced with an underscore.
-
-        Example:
-
-            %(prog)s --record-and-pipe "~/recordings/{author}/{category}/{id}-{time:%%Y%%m%%d%%H%%M%%S}.ts" <URL> [STREAM]
+        Deprecated in favor of --stdout --record=FILENAME.
         """,
     )
     output.add_argument(
@@ -1129,6 +1145,18 @@ def build_parser():
         """,
     )
     transport_ffmpeg.add_argument(
+        "--ffmpeg-loglevel",
+        type=str,
+        metavar="LOGLEVEL",
+        help="""
+        Change FFmpeg's `-loglevel` value to `LOGLEVEL`.
+
+        Unless --ffmpeg-verbose or --ffmpeg-verbose-path is set, changing the log level won't have any effect.
+
+        Default is "info".
+        """,
+    )
+    transport_ffmpeg.add_argument(
         "--ffmpeg-fout",
         type=str,
         metavar="OUTFORMAT",
@@ -1422,6 +1450,7 @@ _ARGUMENT_TO_SESSIONOPTION: List[Tuple[str, str, Optional[Callable[[Any], Any]]]
     ("ffmpeg_no_validation", "ffmpeg-no-validation", None),
     ("ffmpeg_verbose", "ffmpeg-verbose", None),
     ("ffmpeg_verbose_path", "ffmpeg-verbose-path", None),
+    ("ffmpeg_loglevel", "ffmpeg-loglevel", None),
     ("ffmpeg_fout", "ffmpeg-fout", None),
     ("ffmpeg_video_transcode", "ffmpeg-video-transcode", None),
     ("ffmpeg_audio_transcode", "ffmpeg-audio-transcode", None),

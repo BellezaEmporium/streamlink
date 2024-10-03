@@ -1,10 +1,13 @@
 import logging
+import os
+import sys
 import warnings
 from datetime import timezone
+from errno import EINVAL, EPIPE
 from inspect import currentframe, getframeinfo
 from io import BytesIO, TextIOWrapper
 from pathlib import Path
-from typing import Iterable, Tuple, Type
+from typing import Iterable, Optional, Tuple, Type
 
 import freezegun
 import pytest
@@ -42,13 +45,19 @@ def log(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, output:
     if "logfile" in request.fixturenames:
         params["filename"] = request.getfixturevalue("logfile")
 
+    stream: Optional[TextIOWrapper] = output
+    if not params.pop("stdout", True):
+        stream = None
+    if not params.pop("stderr", True):
+        monkeypatch.setattr("sys.stderr", None)
+
     fakeroot = logging.getLogger("streamlink.test")
 
     monkeypatch.setattr("streamlink.logger.root", fakeroot)
     monkeypatch.setattr("streamlink.utils.times.LOCAL", timezone.utc)
 
-    handler = logger.basicConfig(stream=output, **params)
-    assert isinstance(handler, logging.Handler)
+    handler = logger.basicConfig(stream=stream, **params)
+    assert isinstance(handler, logging.StreamHandler)
 
     yield fakeroot
 
@@ -177,7 +186,7 @@ class TestLogging:
     @pytest.mark.parametrize("log_failure", [{"style": "invalid"}], indirect=True)
     def test_style_invalid(self, log_failure):
         assert type(log_failure) is ValueError
-        assert str(log_failure) == "Only {} and % formatting styles are supported"
+        assert str(log_failure) == "Style must be one of: %,{,$"
 
     @freezegun.freeze_time("2000-01-02T03:04:05.123456Z")
     @pytest.mark.parametrize("log", [
@@ -239,6 +248,59 @@ class TestLogging:
         log.info("Bär: 🐻")
         assert getvalue(output) == "[test][info] Bär: 🐻\n"
         assert getvalue(output_ascii) == "[test][info] B\\xe4r: \\U0001f43b\n"
+
+    @pytest.mark.parametrize(
+        "log",
+        [pytest.param({"stdout": False}, id="no-stdout")],
+        indirect=["log"],
+    )
+    def test_no_stdout(self, log: logging.Logger):
+        assert log.handlers
+        handler = log.handlers[0]
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream is sys.stderr
+
+    @pytest.mark.parametrize(
+        "log",
+        [pytest.param({"stdout": False, "stderr": False}, id="no-stdout-no-stderr")],
+        indirect=["log"],
+    )
+    def test_no_stdout_no_stderr(self, log: logging.Logger):
+        assert log.handlers
+        handler = log.handlers[0]
+        assert isinstance(handler, logging.FileHandler)
+        assert handler.stream.name.endswith(os.devnull)
+
+    @pytest.mark.parametrize(
+        "errno",
+        [
+            pytest.param(EPIPE, id="EPIPE", marks=pytest.mark.posix_only),
+            pytest.param(EINVAL, id="EINVAL", marks=pytest.mark.windows_only),
+        ],
+    )
+    def test_brokenpipeerror(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        log: logging.Logger,
+        errno: int,
+    ):
+        def flush(*_, **__):
+            exception = OSError()
+            exception.errno = errno
+            raise exception
+
+        streamhandler = log.handlers[0]
+        assert isinstance(streamhandler, logging.StreamHandler)
+        monkeypatch.setattr(streamhandler.stream, "flush", flush)
+
+        log.setLevel("info")
+        log.info("foo")
+
+        # logging.StreamHandler will write emit()/flush() errors to stderr via handleError()
+        out, err = capsys.readouterr()
+        assert not out
+        assert not err
 
     def test_logfile(self, logfile: str, log: logging.Logger, output: TextIOWrapper):
         log.setLevel("info")

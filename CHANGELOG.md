@@ -1,5 +1,51 @@
 # Changelog
 
+## streamlink 6.11.0 (2024-10-01)
+
+- Deprecated: [`--record-and-pipe=...` in favor of `--stdout --record=...`](https://streamlink.github.io/deprecations.html#r-record-and-pipe) (and explicitly disallowed `--stdout --output=...`) ([#6194](https://github.com/streamlink/streamlink/pull/6194))
+- Fixed: error when setting both `--http-no-ssl-verify` and `--http-disable-dh` ([#6205](https://github.com/streamlink/streamlink/pull/6205))
+- Fixed: `--player-passthrough` without a resolved default `--player` ([#6207](https://github.com/streamlink/streamlink/pull/6207))
+- Fixed: error when stdout/stderr file descriptors are missing ([#6197](https://github.com/streamlink/streamlink/pull/6197))
+- Updated: webbrowser API's Chrome devtools protocol to latest version ([#6211](https://github.com/streamlink/streamlink/pull/6211))
+- Updated plugins:
+  - crunchyroll: removed plugin ([#6179](https://github.com/streamlink/streamlink/pull/6179))
+  - dlive: fixed missing stream URL signature ([#6171](https://github.com/streamlink/streamlink/pull/6171))
+  - facebook: removed plugin ([#6199](https://github.com/streamlink/streamlink/pull/6199))
+  - mildom: removed plugin ([#6198](https://github.com/streamlink/streamlink/pull/6198))
+  - tvrby: removed plugin ([#6202](https://github.com/streamlink/streamlink/pull/6202))
+  - tvrplus: removed plugin ([#6203](https://github.com/streamlink/streamlink/pull/6203))
+  - twitch: fixed client-integrity token acquirement ([#6211](https://github.com/streamlink/streamlink/pull/6211))
+  - vk: fixed API params and validation schema ([#6178](https://github.com/streamlink/streamlink/pull/6178))
+  - webtv: removed plugin ([#6172](https://github.com/streamlink/streamlink/pull/6172))
+  - zengatv: removed plugin ([#6174](https://github.com/streamlink/streamlink/pull/6174))
+  - zhanqi: removed plugin ([#6173](https://github.com/streamlink/streamlink/pull/6173))
+- Tests: removed `pytest-asyncio` dependency ([#6208](https://github.com/streamlink/streamlink/pull/6208))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.10.0...6.11.0)
+
+
+## streamlink 6.10.0 (2024-09-06)
+
+- Added: official support for Python 3.13 ([#6133](https://github.com/streamlink/streamlink/pull/6133))
+- Added: `--logformat` and `--logdateformat` ([#6138](https://github.com/streamlink/streamlink/pull/6138), [#6144](https://github.com/streamlink/streamlink/pull/6144))
+- Added: `--ffmpeg-loglevel` ([#6161](https://github.com/streamlink/streamlink/pull/6161))
+- Fixed: continuous logging errors when stdout stream was closed on the reading end ([#6142](https://github.com/streamlink/streamlink/pull/6142))
+- Fixed: HTTP proxy config being used when getting webbrowser API's websocket IPC address ([#6130](https://github.com/streamlink/streamlink/pull/6130))
+- Updated plugins:
+  - booyah: removed plugin ([#6162](https://github.com/streamlink/streamlink/pull/6162))
+  - douyin: fixed validation schema ([#6140](https://github.com/streamlink/streamlink/pull/6140))
+  - galatasaraytv: removed plugin ([#6163](https://github.com/streamlink/streamlink/pull/6163))
+  - idf1: removed plugin ([#6164](https://github.com/streamlink/streamlink/pull/6164))
+  - linelive: removed plugin ([#6165](https://github.com/streamlink/streamlink/pull/6165))
+  - pandalive: fixed missing HTTP headers ([#6148](https://github.com/streamlink/streamlink/pull/6148))
+  - tiktok: fixed schema of inaccessible streams ([#6160](https://github.com/streamlink/streamlink/pull/6160))
+  - youtube: disabled VODs, as they are currently non-functional ([#6135](https://github.com/streamlink/streamlink/pull/6135))
+- Docs: bumped `sphinx-design >=0.5.0,<=0.6.1`, enabling `sphinx >=8.0.0` ([#6137](https://github.com/streamlink/streamlink/pull/6137))
+- Tests: fixed `pytest-asyncio` warnings ([#6143](https://github.com/streamlink/streamlink/pull/6143))
+
+[Full changelog](https://github.com/streamlink/streamlink/compare/6.9.0...6.10.0)
+
+
 ## streamlink 6.9.0 (2024-08-12)
 
 - Added: `streamlink.plugin.api.webbrowser` subpackage with the `aws_waf` module ([#6102](https://github.com/streamlink/streamlink/pull/6102), [#6118](https://github.com/streamlink/streamlink/pull/6118))
